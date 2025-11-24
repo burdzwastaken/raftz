@@ -1,0 +1,8 @@
+.zig-cache/
+zig-out/
+*.o
+
+demo_data_*/
+raft_data_*/
+test_storage/
+.direnv
