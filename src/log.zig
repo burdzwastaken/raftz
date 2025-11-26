@@ -1,3 +1,7 @@
+//! Replicated log management
+//!
+//! Manages the ordered sequence of log entries replicated across the cluster
+
 const std = @import("std");
 const types = @import("types.zig");
 
@@ -5,7 +9,7 @@ const Term = types.Term;
 const LogIndex = types.LogIndex;
 const Allocator = std.mem.Allocator;
 
-/// A single entry in the replicated log
+/// Single entry in the replicated log
 pub const LogEntry = struct {
     term: Term,
     index: LogIndex,
@@ -16,7 +20,7 @@ pub const LogEntry = struct {
     }
 };
 
-/// Replicated log storage
+/// Ordered log of entries to be replicated
 pub const Log = struct {
     allocator: Allocator,
     entries: std.ArrayListUnmanaged(LogEntry),
@@ -35,6 +39,7 @@ pub const Log = struct {
         self.entries.deinit(self.allocator);
     }
 
+    /// Append a new entry to the log
     pub fn append(self: *Log, term: Term, command: []const u8) !LogIndex {
         const index = self.lastIndex() + 1;
         const command_copy = try self.allocator.dupe(u8, command);
@@ -49,7 +54,7 @@ pub const Log = struct {
         return index;
     }
 
-    /// 1-based
+    /// Get entry at index (returns null if index out of bounds)
     pub fn get(self: *Log, index: LogIndex) ?*LogEntry {
         if (index == 0 or index > self.lastIndex()) {
             return null;
@@ -57,10 +62,12 @@ pub const Log = struct {
         return &self.entries.items[index - 1];
     }
 
+    /// Get the index of the last entry in the log
     pub fn lastIndex(self: *Log) LogIndex {
         return @intCast(self.entries.items.len);
     }
 
+    /// Get the term of the last entry in the log
     pub fn lastTerm(self: *Log) Term {
         if (self.entries.items.len == 0) {
             return 0;

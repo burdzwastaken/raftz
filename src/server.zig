@@ -1,3 +1,8 @@
+//! Server orchestration for Raft nodes
+//!
+//! The Server manages the event loop, network listeners and coordinates
+//! between the Node and Transport layers
+
 const std = @import("std");
 const types = @import("types.zig");
 const node_mod = @import("node.zig");
@@ -10,7 +15,10 @@ const Node = node_mod.Node;
 const Transport = network_mod.Transport;
 const ServerId = types.ServerId;
 
-/// Server loop
+/// Server handles:
+/// - Listening for incoming RPC connections
+/// - Event loop for elections, heartbeats and timeouts
+/// - Handling concurrent RPC connections
 pub const Server = struct {
     allocator: Allocator,
     node: *Node,
@@ -21,6 +29,7 @@ pub const Server = struct {
     connection_threads: std.ArrayListUnmanaged(std.Thread),
     threads_mutex: std.Thread.Mutex,
 
+    /// Initialize a new server
     pub fn init(allocator: Allocator, node: *Node, transport: *Transport) Server {
         return .{
             .allocator = allocator,
@@ -34,6 +43,7 @@ pub const Server = struct {
         };
     }
 
+    /// Start the server threads
     pub fn start(self: *Server) !void {
         self.running.store(true, .release);
 
@@ -43,6 +53,7 @@ pub const Server = struct {
         self.event_thread = try std.Thread.spawn(.{}, eventLoop, .{self});
     }
 
+    /// Stop the server threads
     pub fn stop(self: *Server) void {
         self.running.store(false, .release);
 
@@ -316,7 +327,6 @@ pub const Server = struct {
 
             self.threads_mutex.lock();
             self.connection_threads.append(self.allocator, thread) catch {
-                // detach it as fallback if we cannot track
                 thread.detach();
                 self.threads_mutex.unlock();
                 continue;

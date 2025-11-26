@@ -1,3 +1,7 @@
+//! Persistent storage for Raft node state
+//!
+//! Saves and loads node state, log entries and snapshots to disk
+
 const std = @import("std");
 const types = @import("types.zig");
 const log_mod = @import("log.zig");
@@ -9,7 +13,7 @@ const Log = log_mod.Log;
 const LogEntry = log_mod.LogEntry;
 const Allocator = std.mem.Allocator;
 
-/// Persistent storage for Raft state
+/// File-based storage for persistent Raft state
 pub const Storage = struct {
     allocator: Allocator,
     dir_path: []const u8,
@@ -31,6 +35,7 @@ pub const Storage = struct {
         _ = self;
     }
 
+    /// Save current term vote, and last applied index to disk
     pub fn saveState(self: *Storage, term: Term, voted_for: ?ServerId, last_applied: LogIndex) !void {
         const path = try std.fs.path.join(self.allocator, &[_][]const u8{ self.dir_path, "state" });
         defer self.allocator.free(path);
@@ -43,6 +48,7 @@ pub const Storage = struct {
         try file.writeAll(content);
     }
 
+    /// Load persisted state from disk (returns defaults if file not found)
     pub fn loadState(self: *Storage) !struct { term: Term, voted_for: ?ServerId, last_applied: LogIndex } {
         const path = try std.fs.path.join(self.allocator, &[_][]const u8{ self.dir_path, "state" });
         defer self.allocator.free(path);
@@ -71,6 +77,7 @@ pub const Storage = struct {
         return .{ .term = term, .voted_for = voted_for, .last_applied = last_applied };
     }
 
+    /// Save all log entries to disk
     pub fn saveLog(self: *Storage, log: *Log) !void {
         const path = try std.fs.path.join(self.allocator, &[_][]const u8{ self.dir_path, "log" });
         defer self.allocator.free(path);

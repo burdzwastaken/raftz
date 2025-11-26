@@ -1,3 +1,7 @@
+//! Raft RPC message types
+//!
+//! Defines request and response structures for Raft RPCs
+
 const std = @import("std");
 const types = @import("types.zig");
 const log = @import("log.zig");
@@ -7,7 +11,7 @@ const LogIndex = types.LogIndex;
 const ServerId = types.ServerId;
 const LogEntry = log.LogEntry;
 
-/// RequestVote RPC request
+/// Request from candidate seeking votes during election
 pub const RequestVoteRequest = struct {
     term: Term,
     candidate_id: ServerId,
@@ -15,13 +19,13 @@ pub const RequestVoteRequest = struct {
     last_log_term: Term,
 };
 
-/// RequestVote RPC response
+/// Response to RequestVote RPC
 pub const RequestVoteResponse = struct {
     term: Term,
     vote_granted: bool,
 };
 
-/// AppendEntries RPC request
+/// Request from leader to replicate log entries or send heartbeat
 pub const AppendEntriesRequest = struct {
     term: Term,
     leader_id: ServerId,
@@ -31,14 +35,14 @@ pub const AppendEntriesRequest = struct {
     leader_commit: LogIndex,
 };
 
-/// AppendEntries RPC response
+/// Response to AppendEntries RPC
 pub const AppendEntriesResponse = struct {
     term: Term,
     success: bool,
     match_index: LogIndex,
 };
 
-/// InstallSnapshot RPC request
+/// Request from leader to install snapshot on follower
 pub const InstallSnapshotRequest = struct {
     term: Term,
     leader_id: ServerId,
@@ -49,7 +53,7 @@ pub const InstallSnapshotRequest = struct {
     done: bool,
 };
 
-/// InstallSnapshot RPC response
+/// Response to InstallSnapshot RPC
 pub const InstallSnapshotResponse = struct {
     term: Term,
 };

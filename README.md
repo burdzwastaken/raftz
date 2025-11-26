@@ -101,7 +101,6 @@ zig build run-cluster
 
 ### Core Improvements
 - [ ] Test suite for Raft implementation
-- [ ] Documentation
 - [ ] Migrate to new Zig IO interface
 
 ### Advanced Raft Features

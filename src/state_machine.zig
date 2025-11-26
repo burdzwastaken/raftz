@@ -1,3 +1,8 @@
+//! Pluggable state machine interface for Raft
+//!
+//! State machines apply committed log entries to update application state
+//! Includes a built-in key-value store implementation for testing and simple use cases
+
 const std = @import("std");
 const types = @import("types.zig");
 
@@ -10,7 +15,10 @@ pub const Error = error{
     OutOfMemory,
 };
 
-/// Interface for state machines
+/// Interface for pluggable state machines
+///
+/// Implement this interface to provide custom application logic that
+/// executes on committed log entries
 pub const StateMachine = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
@@ -23,20 +31,25 @@ pub const StateMachine = struct {
         restore: *const fn (ptr: *anyopaque, snapshot: []const u8) Error!void,
     };
 
+    /// Apply a committed log entry to the state machine
     pub fn apply(self: StateMachine, index: LogIndex, command: []const u8) !void {
         return self.vtable.apply(self.ptr, index, command);
     }
 
+    /// Create a snapshot of current state
     pub fn snapshot(self: StateMachine) ![]const u8 {
         return self.vtable.snapshot(self.ptr);
     }
 
+    /// Restore state from a snapshot
     pub fn restore(self: StateMachine, snapshot_data: []const u8) !void {
         return self.vtable.restore(self.ptr, snapshot_data);
     }
 };
 
-/// k/v store state machine for testing
+/// Built-in key-value store state machine
+///
+/// Supports SET and DEL commands for testing and simple use cases
 pub const KvStore = struct {
     allocator: Allocator,
     data: std.StringHashMap([]const u8),

@@ -1,28 +1,40 @@
+//! Common types used throughout the Raft implementation
+
 const std = @import("std");
 
+/// Unique identifier for a server in the Raft cluster
 pub const ServerId = u64;
 
-/// Term number in protocol
+/// Term number used for leader election, log consistency and used to detect stale leaders
 pub const Term = u64;
 
-/// Log index (1-based)
+/// Index position in the replicated log (1-based indexing)
 pub const LogIndex = u64;
 
-/// Server role
+/// Role of a server in the Raft cluster
 pub const Role = enum {
+    /// Follower: Passive server that replicates log entries from the leader
     follower,
+    /// Candidate: Server attempting to become the leader through election
     candidate,
+    /// Leader: Server that handles client requests and replicates logs to followers
     leader,
 };
 
 /// Configuration for a Raft node
 pub const Config = struct {
+    /// Unique identifier for this server
     id: ServerId,
+    /// Minimum election timeout in milliseconds (default: 150ms)
     election_timeout_min: u64 = 150,
+    /// Maximum election timeout in milliseconds (default: 300ms)
     election_timeout_max: u64 = 300,
+    /// Heartbeat interval in milliseconds (default: 50ms)
     heartbeat_interval: u64 = 50,
+    /// Maximum number of entries to send in a single AppendEntries RPC (default: 100)
     max_append_entries: usize = 100,
 
+    /// Validates configuration parameters
     pub fn validate(self: Config) !void {
         if (self.election_timeout_max <= self.election_timeout_min) {
             return error.InvalidElectionTimeout;
@@ -38,6 +50,7 @@ pub const Config = struct {
         }
     }
 
+    /// Generates a random election timeout within the configured range
     pub fn randomElectionTimeout(self: Config) u64 {
         var buf: [8]u8 = undefined;
         std.crypto.random.bytes(&buf);
@@ -51,8 +64,11 @@ pub const Config = struct {
 
 /// Cluster membership configuration
 pub const ClusterConfig = struct {
+    /// List of server IDs in the cluster
     servers: []const ServerId,
 
+    /// Returns the number of votes needed for a majority
+    /// For a cluster of N servers, majority is floor(N/2) + 1
     pub fn majoritySize(self: ClusterConfig) usize {
         return (self.servers.len / 2) + 1;
     }

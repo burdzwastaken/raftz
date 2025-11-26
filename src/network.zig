@@ -1,3 +1,8 @@
+//! Network transport layer for Raft RPC communication
+//!
+//! TCP-based transport with connection management and
+//! message serialization for Raft RPCs
+
 const std = @import("std");
 const types = @import("types.zig");
 const rpc = @import("rpc.zig");
@@ -7,7 +12,7 @@ const logging = @import("logging.zig");
 const ServerId = types.ServerId;
 const Allocator = std.mem.Allocator;
 
-/// Address information for a peer
+/// Network address (host:port) for a server
 pub const Address = struct {
     host: []const u8,
     port: u16,
@@ -164,7 +169,7 @@ pub const Server = struct {
     }
 };
 
-/// Network transport for sending RPCs between nodes
+/// Network transport for RPC communication between Raft nodes
 pub const Transport = struct {
     allocator: Allocator,
     peers: std.AutoHashMap(ServerId, Address),
@@ -172,6 +177,7 @@ pub const Transport = struct {
     timeout_ms: u64,
     max_message_size: usize,
 
+    /// Initialize a new transport with default message size limit
     pub fn init(allocator: Allocator, timeout_ms: u64) Transport {
         return .{
             .allocator = allocator,
@@ -204,10 +210,12 @@ pub const Transport = struct {
         }
     }
 
+    /// Start listening for incoming connections on the specified address
     pub fn listen(self: *Transport, address: Address) !void {
         self.server = try Server.init(self.allocator, address);
     }
 
+    /// Add a peer server to the Transport routing table
     pub fn addPeer(self: *Transport, id: ServerId, address: Address) !void {
         const host_copy = try self.allocator.dupe(u8, address.host);
         try self.peers.put(id, .{

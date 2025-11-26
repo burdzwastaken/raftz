@@ -1,3 +1,8 @@
+//! Raft node implementation handling consensus operations
+//!
+//! Node is the core component that implements the Raft consensus algorithm,
+//! managing leader election, log replication and state machine application
+
 const std = @import("std");
 const types = @import("types.zig");
 const log_mod = @import("log.zig");
@@ -58,7 +63,11 @@ const LeaderState = struct {
     }
 };
 
-/// Core Raft node implementation
+/// Node handles:
+/// - Leader election with randomized timeouts
+/// - Log replication from leader to followers
+/// - State machine application of committed entries
+/// - Persistent state management via optional Storage
 pub const Node = struct {
     allocator: Allocator,
     config: Config,
@@ -75,6 +84,10 @@ pub const Node = struct {
     election_timeout: u64,
     mutex: std.Thread.Mutex,
 
+    /// Initialize a new Raft node
+    ///
+    /// If storage is provided, loads persistent state, log entries and snapshots
+    /// from disk to recover from a previous run
     pub fn init(
         allocator: Allocator,
         config: Config,
@@ -129,6 +142,7 @@ pub const Node = struct {
         }
     }
 
+    /// Start a new leader election
     pub fn startElection(self: *Node) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -421,7 +435,6 @@ pub const Node = struct {
             }
         }
 
-        // delete conflicting entries
         var insert_index = request.prev_log_index + 1;
         for (request.entries, 0..) |entry, i| {
             const entry_index = request.prev_log_index + 1 + @as(LogIndex, @intCast(i));

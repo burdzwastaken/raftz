@@ -176,7 +176,6 @@ pub fn deserialize(allocator: Allocator, data: []const u8) !Message {
     };
 }
 
-/// Free!!!!
 pub fn freeMessage(allocator: Allocator, msg: Message) void {
     switch (msg) {
         .append_entries_request => |req| {
