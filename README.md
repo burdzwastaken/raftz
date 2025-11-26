@@ -120,6 +120,10 @@ zig build run-cluster
 - [ ] Concurrent client request handling tests
 - [ ] Byzantine fault tolerance edge cases
 
+## Credits
+
+Thanks to Diego Ongaro and John Ousterhout for the excellent resources at [https://raft.github.io/](https://raft.github.io/). Also a shout out to the many Raft implementations in the wild for inspiration!
+
 ## License
 
 MIT
