@@ -100,7 +100,6 @@ zig build run-cluster
 ## TODO
 
 ### Core Improvements
-- [ ] Test suite for Raft implementation
 - [ ] Migrate to new Zig IO interface
 
 ### Advanced Raft Features
@@ -112,6 +111,14 @@ zig build run-cluster
 - [ ] Witness members
 - [ ] Client request deduplication (idempotent updates)
 - [ ] Request batching and pipelining
+
+### Enhanced Testing
+- [ ] Network partition and recovery tests
+- [ ] Snapshot and log compaction tests
+- [ ] Cluster membership change tests
+- [ ] Performance and stress tests
+- [ ] Concurrent client request handling tests
+- [ ] Byzantine fault tolerance edge cases
 
 ## License
 

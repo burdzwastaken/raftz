@@ -24,8 +24,13 @@ pub fn build(b: *std.Build) void {
     });
     const run_lib_tests = b.addRunArtifact(lib_tests);
 
-    const test_step = b.step("test", "Run unit tests");
+    const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_lib_tests.step);
+
+    addIntegrationTest(b, target, optimize, raft_module, "tests/test_utils.zig", "test-utils", test_step, "Test utilities");
+    addIntegrationTest(b, target, optimize, raft_module, "tests/leader_election_test.zig", "test-election", test_step, "Test leader elections");
+    addIntegrationTest(b, target, optimize, raft_module, "tests/log_replication_test.zig", "test-replication", test_step, "Test log replication");
+    addIntegrationTest(b, target, optimize, raft_module, "tests/safety_test.zig", "test-safety", test_step, "Test safety properties");
 
     const docs_module = b.createModule(.{
         .root_source_file = b.path("src/raftz.zig"),
@@ -94,4 +99,31 @@ fn addExample(
     }
     const run_step = b.step(step_name, step_description);
     run_step.dependOn(&run_cmd.step);
+}
+
+fn addIntegrationTest(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    raft_module: *std.Build.Module,
+    source_path: []const u8,
+    name: []const u8,
+    test_step: *std.Build.Step,
+    description: []const u8,
+) void {
+    _ = description;
+    const test_exe_module = b.createModule(.{
+        .root_source_file = b.path(source_path),
+        .target = target,
+        .optimize = optimize,
+    });
+    test_exe_module.addImport("raftz", raft_module);
+
+    const test_exe = b.addTest(.{
+        .name = name,
+        .root_module = test_exe_module,
+    });
+
+    const run_test = b.addRunArtifact(test_exe);
+    test_step.dependOn(&run_test.step);
 }
