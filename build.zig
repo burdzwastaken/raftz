@@ -26,6 +26,42 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_tests.step);
+
+    const docs_module = b.createModule(.{
+        .root_source_file = b.path("src/raftz.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const docs_obj = b.addObject(.{
+        .name = "raftz",
+        .root_module = docs_module,
+    });
+    const install_docs = b.addInstallDirectory(.{
+        .source_dir = docs_obj.getEmittedDocs(),
+        .install_dir = .prefix,
+        .install_subdir = "docs",
+    });
+
+    const docs_step = b.step("docs", "Generate documentation");
+    docs_step.dependOn(&install_docs.step);
+
+    const serve_docs_module = b.createModule(.{
+        .root_source_file = b.path("tools/serve_docs.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const serve_docs_exe = b.addExecutable(.{
+        .name = "serve",
+        .root_module = serve_docs_module,
+    });
+    b.installArtifact(serve_docs_exe);
+
+    const serve_docs_cmd = b.addRunArtifact(serve_docs_exe);
+    serve_docs_cmd.step.dependOn(&install_docs.step);
+    serve_docs_cmd.step.dependOn(b.getInstallStep());
+
+    const serve_docs_step = b.step("serve", "Serve documentation on http://127.0.0.1:8080");
+    serve_docs_step.dependOn(&serve_docs_cmd.step);
 }
 
 fn addExample(
