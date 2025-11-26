@@ -18,15 +18,8 @@ Implementation of the [Raft consensus algorithm](https://raft.github.io/raft.pdf
 
 ### Installation
 
-Add to your `build.zig.zon`:
-
-```zig
-.dependencies = .{
-    .raftz = .{
-        .url = "https://github.com/burdzwastaken/raftz/archive/refs/tags/v0.0.1.tar.gz",
-        .hash = "<hash>",
-    },
-},
+```bash
+zig fetch --save https://github.com/burdzwastaken/raftz/archive/refs/tags/v0.0.1.tar.gz
 ```
 
 ### Basic Usage
