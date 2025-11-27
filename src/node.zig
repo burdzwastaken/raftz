@@ -34,22 +34,34 @@ const VolatileState = struct {
     last_applied: LogIndex = 0,
 };
 
+/// Pending read index request awaiting leadership confirmation
+const ReadIndexState = struct {
+    read_id: u64,
+    read_index: LogIndex,
+    acks: usize,
+    timestamp: i64,
+};
+
 /// Volatile state on leaders
 const LeaderState = struct {
     next_index: std.AutoHashMap(ServerId, LogIndex),
-
     match_index: std.AutoHashMap(ServerId, LogIndex),
+    pending_reads: std.ArrayListUnmanaged(ReadIndexState),
+    next_read_id: u64,
 
     pub fn init(allocator: Allocator) LeaderState {
         return .{
             .next_index = std.AutoHashMap(ServerId, LogIndex).init(allocator),
             .match_index = std.AutoHashMap(ServerId, LogIndex).init(allocator),
+            .pending_reads = .{},
+            .next_read_id = 1,
         };
     }
 
-    pub fn deinit(self: *LeaderState) void {
+    pub fn deinit(self: *LeaderState, allocator: Allocator) void {
         self.next_index.deinit();
         self.match_index.deinit();
+        self.pending_reads.deinit(allocator);
     }
 
     pub fn reset(self: *LeaderState, cluster: ClusterConfig, last_log_index: LogIndex) !void {
@@ -138,7 +150,7 @@ pub const Node = struct {
     pub fn deinit(self: *Node) void {
         self.log.deinit();
         if (self.leader) |*leader| {
-            leader.deinit();
+            leader.deinit(self.allocator);
         }
     }
 
@@ -198,12 +210,12 @@ pub const Node = struct {
         self.current_leader = self.config.id;
 
         var leader_state = LeaderState.init(self.allocator);
-        errdefer leader_state.deinit();
+        errdefer leader_state.deinit(self.allocator);
 
         try leader_state.reset(self.cluster, self.log.lastIndex());
 
         if (self.leader) |*old_leader| {
-            old_leader.deinit();
+            old_leader.deinit(self.allocator);
         }
         self.leader = leader_state;
     }
@@ -230,7 +242,7 @@ pub const Node = struct {
 
             self.role = .follower;
             if (self.leader) |*leader| {
-                leader.deinit();
+                leader.deinit(self.allocator);
                 self.leader = null;
             }
         } else if (self.role == .pre_candidate) {
@@ -782,6 +794,110 @@ pub const Node = struct {
                 snapshot.last_term,
             });
         }
+    }
+
+    /// Request a read index for linearizable reads
+    pub fn requestReadIndex(self: *Node) !LogIndex {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.role != .leader) {
+            return error.NotLeader;
+        }
+
+        const leader_state = &(self.leader orelse return error.NotLeader);
+        const read_index = self.volatile_state.commit_index;
+
+        const read_id = leader_state.next_read_id;
+        leader_state.next_read_id += 1;
+
+        try leader_state.pending_reads.append(self.allocator, .{
+            .read_id = read_id,
+            .read_index = read_index,
+            .acks = 1, // leader counts as one ack
+            .timestamp = std.time.milliTimestamp(),
+        });
+
+        logging.debug("Node {d}: ReadIndex request {d} at commit_index={d}", .{
+            self.config.id,
+            read_id,
+            read_index,
+        });
+
+        return read_index;
+    }
+
+    /// Handle ReadIndex RPC from followers
+    pub fn handleReadIndex(
+        self: *Node,
+        request: rpc.ReadIndexRequest,
+    ) rpc.ReadIndexResponse {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.role != .leader) {
+            return .{
+                .term = self.persistent.current_term,
+                .read_index = 0,
+                .success = false,
+            };
+        }
+
+        const read_index = self.volatile_state.commit_index;
+
+        logging.debug("Node {d}: Handling ReadIndex request {d}, returning read_index={d}", .{
+            self.config.id,
+            request.read_id,
+            read_index,
+        });
+
+        return .{
+            .term = self.persistent.current_term,
+            .read_index = read_index,
+            .success = true,
+        };
+    }
+
+    /// Record ack for a pending read index request
+    pub fn ackReadIndex(self: *Node, read_id: u64) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const leader_state = &(self.leader orelse return);
+
+        for (leader_state.pending_reads.items) |*read_state| {
+            if (read_state.read_id == read_id) {
+                read_state.acks += 1;
+                break;
+            }
+        }
+    }
+
+    /// Get confirmed read indexes that have majority ack
+    pub fn getConfirmedReadIndex(self: *Node) ?LogIndex {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const leader_state = &(self.leader orelse return null);
+        const majority = self.cluster.majoritySize();
+
+        var confirmed_index: ?LogIndex = null;
+
+        // remove confirmed reads and track highest confirmed index
+        var i: usize = 0;
+        while (i < leader_state.pending_reads.items.len) {
+            const read_state = leader_state.pending_reads.items[i];
+            if (read_state.acks >= majority) {
+                if (confirmed_index == null or read_state.read_index > confirmed_index.?) {
+                    confirmed_index = read_state.read_index;
+                }
+                _ = leader_state.pending_reads.swapRemove(i);
+            } else {
+                i += 1;
+            }
+        }
+
+        return confirmed_index;
     }
 };
 

@@ -71,3 +71,15 @@ pub const PreVoteResponse = struct {
     term: Term,
     vote_granted: bool,
 };
+
+/// Request for read index (linearizable read without log replication)
+pub const ReadIndexRequest = struct {
+    read_id: u64,
+};
+
+/// Response to ReadIndex RPC
+pub const ReadIndexResponse = struct {
+    term: Term,
+    read_index: LogIndex,
+    success: bool,
+};

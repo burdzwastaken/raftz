@@ -299,6 +299,23 @@ pub const Transport = struct {
         };
     }
 
+    pub fn sendReadIndex(
+        self: *Transport,
+        target: ServerId,
+        request: rpc.ReadIndexRequest,
+    ) !rpc.ReadIndexResponse {
+        var conn = try self.connectToPeer(target);
+        defer conn.close(self.allocator);
+
+        const request_msg = protocol.Message{ .read_index_request = request };
+        const response_msg = try conn.sendRequest(self.allocator, request_msg, self.timeout_ms);
+
+        return switch (response_msg) {
+            .read_index_response => |resp| resp,
+            else => error.InvalidResponse,
+        };
+    }
+
     pub fn handleConnection(self: *Transport, node: anytype, conn: *Connection) !void {
         defer conn.close(self.allocator);
 
@@ -322,6 +339,9 @@ pub const Transport = struct {
                 },
                 .install_snapshot_request => |req| .{
                     .install_snapshot_response = try node.handleInstallSnapshot(req),
+                },
+                .read_index_request => |req| .{
+                    .read_index_response = node.handleReadIndex(req),
                 },
                 else => return error.InvalidRequest,
             };

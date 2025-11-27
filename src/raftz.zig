@@ -60,6 +60,10 @@ pub const PreVoteResponse = rpc.PreVoteResponse;
 pub const RequestVoteRequest = rpc.RequestVoteRequest;
 /// RPC request for log replication and heartbeats
 pub const AppendEntriesRequest = rpc.AppendEntriesRequest;
+/// RPC request for linearizable reads
+pub const ReadIndexRequest = rpc.ReadIndexRequest;
+/// RPC response for ReadIndex protocol
+pub const ReadIndexResponse = rpc.ReadIndexResponse;
 
 test {
     std.testing.refAllDecls(@This());

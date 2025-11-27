@@ -16,6 +16,8 @@ pub const MessageType = enum(u8) {
     install_snapshot_response = 6,
     pre_vote_request = 7,
     pre_vote_response = 8,
+    read_index_request = 9,
+    read_index_response = 10,
 };
 
 /// Wire format for messages
@@ -28,6 +30,8 @@ pub const Message = union(MessageType) {
     install_snapshot_response: rpc.InstallSnapshotResponse,
     pre_vote_request: rpc.PreVoteRequest,
     pre_vote_response: rpc.PreVoteResponse,
+    read_index_request: rpc.ReadIndexRequest,
+    read_index_response: rpc.ReadIndexResponse,
 };
 
 /// Serialize a message to binary format
@@ -91,6 +95,14 @@ pub fn serialize(allocator: Allocator, msg: Message) ![]const u8 {
         .pre_vote_response => |resp| {
             try writer.writeInt(u64, resp.term, .little);
             try writer.writeByte(if (resp.vote_granted) 1 else 0);
+        },
+        .read_index_request => |req| {
+            try writer.writeInt(u64, req.read_id, .little);
+        },
+        .read_index_response => |resp| {
+            try writer.writeInt(u64, resp.term, .little);
+            try writer.writeInt(u64, resp.read_index, .little);
+            try writer.writeByte(if (resp.success) 1 else 0);
         },
     }
 
@@ -199,6 +211,18 @@ pub fn deserialize(allocator: Allocator, data: []const u8) !Message {
             .pre_vote_response = .{
                 .term = try reader.readInt(u64, .little),
                 .vote_granted = (try reader.readByte()) != 0,
+            },
+        },
+        .read_index_request => .{
+            .read_index_request = .{
+                .read_id = try reader.readInt(u64, .little),
+            },
+        },
+        .read_index_response => .{
+            .read_index_response = .{
+                .term = try reader.readInt(u64, .little),
+                .read_index = try reader.readInt(u64, .little),
+                .success = (try reader.readByte()) != 0,
             },
         },
     };

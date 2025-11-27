@@ -92,17 +92,22 @@ zig build run-cluster
 
 ## TODO
 
-### Core Improvements
-- [ ] Migrate to new Zig IO interface
+### Zig Improvements
+- [ ] Migrate to new Zig reader/writer I/O interfacez
 
 ### Advanced Raft Features
 - [ ] Dynamic membership changes (addServer/removeServer RPCs)
-- [ ] ReadIndex protocol for linearizable read-only queries
-- [ ] Leadership transfer for graceful handoff
+- [x] Pre-vote optimization to reduce election disruptions
+- [x] ReadIndex protocol
+  - [ ] Integrate ReadIndex with heartbeat responses for real democracy!
+  - [ ] Add timeout for stale read requests
+  - [ ] Implement follower read index caching
+  - [ ] Add moar ReadIndex tests
+- [ ] Leadership transfer / graceful handoff
 - [ ] Non-voting members (learners)
 - [ ] Witness members
-- [ ] Client request deduplication (idempotent updates)
-- [ ] Request batching and pipelining
+- [ ] Client request dedup'n (idempotent updates)
+- [ ] Request batching/pipelining
 
 ### Enhanced Testing
 - [ ] Network partition and recovery tests
