@@ -320,3 +320,87 @@ test "Leader Election: Invalid requests are rejected" {
     const resp2 = node1.handleRequestVote(invalid_candidate_req);
     try std.testing.expect(!resp2.vote_granted);
 }
+
+test "Leader Election: PreVote doesn't increment term" {
+    const allocator = std.testing.allocator;
+
+    var cluster = try test_utils.TestCluster.init(allocator, 3);
+    defer cluster.deinit();
+
+    const node1 = try cluster.addNode(test_utils.testConfig(1));
+    _ = try cluster.addNode(test_utils.testConfig(2));
+    _ = try cluster.addNode(test_utils.testConfig(3));
+
+    try node1.startElection();
+    try node1.becomeLeader();
+    const initial_term = node1.getCurrentTerm();
+
+    const pre_vote_req = raftz.PreVoteRequest{
+        .term = initial_term + 1,
+        .candidate_id = 2,
+        .last_log_index = 0,
+        .last_log_term = 0,
+    };
+
+    const resp = node1.handlePreVote(pre_vote_req);
+
+    try std.testing.expectEqual(initial_term, node1.getCurrentTerm());
+    try std.testing.expectEqual(Role.leader, node1.getRole());
+
+    try std.testing.expect(!resp.vote_granted);
+}
+
+test "Leader Election: PreVote granted when no recent leader" {
+    const allocator = std.testing.allocator;
+
+    var cluster = try test_utils.TestCluster.init(allocator, 3);
+    defer cluster.deinit();
+
+    const node1 = try cluster.addNode(test_utils.testConfig(1));
+    _ = try cluster.addNode(test_utils.testConfig(2));
+    _ = try cluster.addNode(test_utils.testConfig(3));
+
+    cluster.tick(350);
+
+    const pre_vote_req = raftz.PreVoteRequest{
+        .term = 1,
+        .candidate_id = 2,
+        .last_log_index = 0,
+        .last_log_term = 0,
+    };
+
+    const resp = node1.handlePreVote(pre_vote_req);
+
+    try std.testing.expect(resp.vote_granted);
+
+    try std.testing.expectEqual(@as(Term, 0), node1.getCurrentTerm());
+}
+
+test "Leader Election: PreVote rejects stale candidate" {
+    const allocator = std.testing.allocator;
+
+    var cluster = try test_utils.TestCluster.init(allocator, 3);
+    defer cluster.deinit();
+
+    const node1 = try cluster.addNode(test_utils.testConfig(1));
+    _ = try cluster.addNode(test_utils.testConfig(2));
+    _ = try cluster.addNode(test_utils.testConfig(3));
+
+    try node1.becomeLeader();
+    node1.mutex.lock();
+    node1.persistent.current_term = 5;
+    node1.mutex.unlock();
+    _ = try node1.submitCommand("cmd1");
+
+    const pre_vote_req = raftz.PreVoteRequest{
+        .term = 4,
+        .candidate_id = 2,
+        .last_log_index = 0,
+        .last_log_term = 0,
+    };
+
+    const resp = node1.handlePreVote(pre_vote_req);
+
+    try std.testing.expect(!resp.vote_granted);
+    try std.testing.expectEqual(@as(Term, 5), resp.term);
+}

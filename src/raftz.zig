@@ -52,6 +52,10 @@ pub const Storage = persistence.Storage;
 pub const StateMachine = state_machine.StateMachine;
 /// Built-in key-value store state machine
 pub const KvStore = state_machine.KvStore;
+/// RPC request for pre-vote phase (prevents election disruptions)
+pub const PreVoteRequest = rpc.PreVoteRequest;
+/// RPC response for pre-vote phase
+pub const PreVoteResponse = rpc.PreVoteResponse;
 /// RPC request for vote during leader election
 pub const RequestVoteRequest = rpc.RequestVoteRequest;
 /// RPC request for log replication and heartbeats

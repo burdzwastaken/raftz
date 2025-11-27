@@ -97,7 +97,6 @@ zig build run-cluster
 
 ### Advanced Raft Features
 - [ ] Dynamic membership changes (addServer/removeServer RPCs)
-- [ ] Pre-vote optimization to reduce election disruptions
 - [ ] ReadIndex protocol for linearizable read-only queries
 - [ ] Leadership transfer for graceful handoff
 - [ ] Non-voting members (learners)

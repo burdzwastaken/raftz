@@ -83,6 +83,7 @@ pub const Server = struct {
 
             switch (role) {
                 .follower => try self.followerTick(),
+                .pre_candidate => try self.preCandidateTick(),
                 .candidate => try self.candidateTick(),
                 .leader => try self.leaderTick(),
             }
@@ -94,12 +95,28 @@ pub const Server = struct {
     }
 
     fn followerTick(self: *Server) !void {
-        if (self.node.isElectionTimeout()) {
+        if (self.node.shouldStartPreVote()) {
+            logging.debug("Node {d}: Election timeout, starting pre-vote", .{
+                self.node.config.id,
+            });
+            self.node.startPreVote();
+            try self.runPreVote();
+        } else if (self.node.isElectionTimeout() and !self.node.config.enable_prevote) {
             logging.debug("Node {d}: Election timeout, starting election", .{
                 self.node.config.id,
             });
             try self.node.startElection();
             try self.runElection();
+        }
+    }
+
+    fn preCandidateTick(self: *Server) !void {
+        if (self.node.isElectionTimeout()) {
+            logging.debug("Node {d}: Pre-vote timeout, retrying pre-vote", .{
+                self.node.config.id,
+            });
+            self.node.startPreVote();
+            try self.runPreVote();
         }
     }
 
@@ -129,6 +146,85 @@ pub const Server = struct {
             self.node.mutex.lock();
             defer self.node.mutex.unlock();
             self.node.last_heartbeat = std.time.milliTimestamp();
+        }
+    }
+
+    fn runPreVote(self: *Server) !void {
+        const request = blk: {
+            self.node.mutex.lock();
+            defer self.node.mutex.unlock();
+
+            break :blk rpc.PreVoteRequest{
+                .term = self.node.persistent.current_term + 1,
+                .candidate_id = self.node.config.id,
+                .last_log_index = self.node.log.lastIndex(),
+                .last_log_term = self.node.log.lastTerm(),
+            };
+        };
+
+        var votes: usize = 1;
+        var votes_needed: usize = 0;
+
+        {
+            self.node.mutex.lock();
+            defer self.node.mutex.unlock();
+            votes_needed = self.node.cluster.majoritySize();
+        }
+
+        for (self.node.cluster.servers) |peer_id| {
+            if (peer_id == self.node.config.id) continue;
+
+            if (!self.running.load(.acquire)) return;
+
+            const response = self.transport.sendPreVote(peer_id, request) catch |err| {
+                logging.debug("Node {d}: Failed to send PreVote to {d}: {}", .{
+                    self.node.config.id,
+                    peer_id,
+                    err,
+                });
+                continue;
+            };
+
+            if (response.vote_granted) {
+                votes += 1;
+                logging.debug("Node {d}: Got pre-vote from {d} (total: {d}/{d})", .{
+                    self.node.config.id,
+                    peer_id,
+                    votes,
+                    votes_needed,
+                });
+            } else if (response.term > self.node.persistent.current_term) {
+                logging.debug("Node {d}: Saw higher term {d} in pre-vote, stepping down", .{
+                    self.node.config.id,
+                    response.term,
+                });
+                self.node.stepDown(response.term) catch |err| {
+                    logging.err("Node {d}: Failed to step down: {}", .{ self.node.config.id, err });
+                };
+                return;
+            }
+
+            if (votes >= votes_needed) {
+                logging.info("Node {d}: Won pre-vote with {d}/{d} votes, starting real election", .{
+                    self.node.config.id,
+                    votes,
+                    votes_needed,
+                });
+                try self.node.startElection();
+                try self.runElection();
+                return;
+            }
+        }
+
+        if (votes < votes_needed) {
+            logging.debug("Node {d}: Lost pre-vote with {d}/{d} votes, stepping back to follower", .{
+                self.node.config.id,
+                votes,
+                votes_needed,
+            });
+            self.node.mutex.lock();
+            defer self.node.mutex.unlock();
+            self.node.role = .follower;
         }
     }
 

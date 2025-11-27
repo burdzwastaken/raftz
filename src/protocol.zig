@@ -14,6 +14,8 @@ pub const MessageType = enum(u8) {
     append_entries_response = 4,
     install_snapshot_request = 5,
     install_snapshot_response = 6,
+    pre_vote_request = 7,
+    pre_vote_response = 8,
 };
 
 /// Wire format for messages
@@ -24,6 +26,8 @@ pub const Message = union(MessageType) {
     append_entries_response: rpc.AppendEntriesResponse,
     install_snapshot_request: rpc.InstallSnapshotRequest,
     install_snapshot_response: rpc.InstallSnapshotResponse,
+    pre_vote_request: rpc.PreVoteRequest,
+    pre_vote_response: rpc.PreVoteResponse,
 };
 
 /// Serialize a message to binary format
@@ -77,6 +81,16 @@ pub fn serialize(allocator: Allocator, msg: Message) ![]const u8 {
         },
         .install_snapshot_response => |resp| {
             try writer.writeInt(u64, resp.term, .little);
+        },
+        .pre_vote_request => |req| {
+            try writer.writeInt(u64, req.term, .little);
+            try writer.writeInt(u64, req.candidate_id, .little);
+            try writer.writeInt(u64, req.last_log_index, .little);
+            try writer.writeInt(u64, req.last_log_term, .little);
+        },
+        .pre_vote_response => |resp| {
+            try writer.writeInt(u64, resp.term, .little);
+            try writer.writeByte(if (resp.vote_granted) 1 else 0);
         },
     }
 
@@ -171,6 +185,20 @@ pub fn deserialize(allocator: Allocator, data: []const u8) !Message {
         .install_snapshot_response => .{
             .install_snapshot_response = .{
                 .term = try reader.readInt(u64, .little),
+            },
+        },
+        .pre_vote_request => .{
+            .pre_vote_request = .{
+                .term = try reader.readInt(u64, .little),
+                .candidate_id = try reader.readInt(u64, .little),
+                .last_log_index = try reader.readInt(u64, .little),
+                .last_log_term = try reader.readInt(u64, .little),
+            },
+        },
+        .pre_vote_response => .{
+            .pre_vote_response = .{
+                .term = try reader.readInt(u64, .little),
+                .vote_granted = (try reader.readByte()) != 0,
             },
         },
     };

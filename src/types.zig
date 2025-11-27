@@ -15,6 +15,8 @@ pub const LogIndex = u64;
 pub const Role = enum {
     /// Follower: Passive server that replicates log entries from the leader
     follower,
+    /// PreCandidate: Server in pre-vote phase before starting real election
+    pre_candidate,
     /// Candidate: Server attempting to become the leader through election
     candidate,
     /// Leader: Server that handles client requests and replicates logs to followers
@@ -33,6 +35,8 @@ pub const Config = struct {
     heartbeat_interval: u64 = 50,
     /// Maximum number of entries to send in a single AppendEntries RPC (default: 100)
     max_append_entries: usize = 100,
+    /// Enable pre-vote optimization to prevent disruptions from partitioned nodes (default: true)
+    enable_prevote: bool = true,
 
     /// Validates configuration parameters
     pub fn validate(self: Config) !void {

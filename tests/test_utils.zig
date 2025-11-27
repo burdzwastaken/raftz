@@ -211,6 +211,7 @@ pub const TestCluster = struct {
             switch (node.getRole()) {
                 .leader => leaders += 1,
                 .follower => followers += 1,
+                .pre_candidate => {}, // transitional state
                 .candidate => candidates += 1,
             }
         }

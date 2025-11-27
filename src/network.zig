@@ -231,6 +231,23 @@ pub const Transport = struct {
         return Connection.init(stream, address, false);
     }
 
+    pub fn sendPreVote(
+        self: *Transport,
+        target: ServerId,
+        request: rpc.PreVoteRequest,
+    ) !rpc.PreVoteResponse {
+        var conn = try self.connectToPeer(target);
+        defer conn.close(self.allocator);
+
+        const request_msg = protocol.Message{ .pre_vote_request = request };
+        const response_msg = try conn.sendRequest(self.allocator, request_msg, self.timeout_ms);
+
+        return switch (response_msg) {
+            .pre_vote_response => |resp| resp,
+            else => error.InvalidResponse,
+        };
+    }
+
     pub fn sendRequestVote(
         self: *Transport,
         target: ServerId,
@@ -294,6 +311,9 @@ pub const Transport = struct {
             defer protocol.freeMessage(self.allocator, msg);
 
             const response: protocol.Message = switch (msg) {
+                .pre_vote_request => |req| .{
+                    .pre_vote_response = node.handlePreVote(req),
+                },
                 .request_vote_request => |req| .{
                     .request_vote_response = node.handleRequestVote(req),
                 },

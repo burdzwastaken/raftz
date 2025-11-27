@@ -142,6 +142,25 @@ pub const Node = struct {
         }
     }
 
+    /// Start pre-vote phase before actual election (if enabled)
+    pub fn startPreVote(self: *Node) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (!self.config.enable_prevote) {
+            return;
+        }
+
+        self.role = .pre_candidate;
+        self.election_timeout = self.config.randomElectionTimeout();
+        self.last_heartbeat = std.time.milliTimestamp();
+
+        logging.info("Node {d}: Starting pre-vote for term {d}", .{
+            self.config.id,
+            self.persistent.current_term + 1,
+        });
+    }
+
     /// Start a new leader election
     pub fn startElection(self: *Node) !void {
         self.mutex.lock();
@@ -203,7 +222,7 @@ pub const Node = struct {
             }
         }
 
-        if (self.role != .follower) {
+        if (self.role != .follower and self.role != .pre_candidate) {
             logging.info("Node {d}: Stepping down to follower for term {d}", .{
                 self.config.id,
                 self.persistent.current_term,
@@ -214,6 +233,8 @@ pub const Node = struct {
                 leader.deinit();
                 self.leader = null;
             }
+        } else if (self.role == .pre_candidate) {
+            self.role = .follower;
         }
     }
 
@@ -221,6 +242,82 @@ pub const Node = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         try self.stepDownLocked(new_term);
+    }
+
+    /// Handle PreVote RPC - similar to RequestVote but doesn't update term or grant actual vote
+    pub fn handlePreVote(
+        self: *Node,
+        request: rpc.PreVoteRequest,
+    ) rpc.PreVoteResponse {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (request.term == 0 or request.candidate_id == 0) {
+            logging.warn("Node {d}: Invalid PreVote with term={d}, candidate={d}", .{
+                self.config.id,
+                request.term,
+                request.candidate_id,
+            });
+            return .{
+                .term = self.persistent.current_term,
+                .vote_granted = false,
+            };
+        }
+
+        if (request.term < self.persistent.current_term) {
+            return .{
+                .term = self.persistent.current_term,
+                .vote_granted = false,
+            };
+        }
+
+        const now = std.time.milliTimestamp();
+        const elapsed: u64 = @intCast(now - self.last_heartbeat);
+        const heard_from_leader = elapsed < self.election_timeout;
+
+        if (self.role == .leader and heard_from_leader) {
+            return .{
+                .term = self.persistent.current_term,
+                .vote_granted = false,
+            };
+        }
+
+        if (heard_from_leader) {
+            return .{
+                .term = self.persistent.current_term,
+                .vote_granted = false,
+            };
+        }
+
+        const our_last_term = self.log.lastTerm();
+        const our_last_index = self.log.lastIndex();
+
+        const vote_granted = blk: {
+            if (request.last_log_term < our_last_term) {
+                break :blk false;
+            }
+
+            if (request.last_log_term == our_last_term and
+                request.last_log_index < our_last_index)
+            {
+                break :blk false;
+            }
+
+            break :blk true;
+        };
+
+        if (vote_granted) {
+            logging.debug("Node {d}: Granted pre-vote to {d} for term {d}", .{
+                self.config.id,
+                request.candidate_id,
+                request.term,
+            });
+        }
+
+        return .{
+            .term = self.persistent.current_term,
+            .vote_granted = vote_granted,
+        };
     }
 
     pub fn handleRequestVote(
@@ -474,6 +571,23 @@ pub const Node = struct {
         defer self.mutex.unlock();
 
         if (self.role == .leader) {
+            return false;
+        }
+
+        const now = std.time.milliTimestamp();
+        const elapsed: u64 = @intCast(now - self.last_heartbeat);
+        return elapsed >= self.election_timeout;
+    }
+
+    pub fn shouldStartPreVote(self: *Node) bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (!self.config.enable_prevote) {
+            return false;
+        }
+
+        if (self.role != .follower) {
             return false;
         }
 

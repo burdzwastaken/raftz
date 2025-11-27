@@ -57,3 +57,17 @@ pub const InstallSnapshotRequest = struct {
 pub const InstallSnapshotResponse = struct {
     term: Term,
 };
+
+/// Request for pre-vote phase
+pub const PreVoteRequest = struct {
+    term: Term,
+    candidate_id: ServerId,
+    last_log_index: LogIndex,
+    last_log_term: Term,
+};
+
+/// Response to PreVote RPC
+pub const PreVoteResponse = struct {
+    term: Term,
+    vote_granted: bool,
+};
