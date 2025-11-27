@@ -5,9 +5,15 @@ const raftz = @import("raftz");
 const test_utils = @import("test_utils.zig");
 
 const Node = raftz.Node;
+const ServerId = raftz.ServerId;
+const Term = raftz.Term;
+const LogIndex = raftz.LogIndex;
 const LogEntry = raftz.LogEntry;
 const AppendEntriesRequest = raftz.AppendEntriesRequest;
 const RequestVoteRequest = raftz.RequestVoteRequest;
+const Storage = raftz.Storage;
+const ClusterConfig = raftz.ClusterConfig;
+const KvStore = raftz.KvStore;
 
 test "Safety: Leader Completeness - committed entry present in new leader" {
     const allocator = std.testing.allocator;
@@ -48,8 +54,8 @@ test "Safety: Leader Completeness - committed entry present in new leader" {
     const last_log_term = node2.log.lastTerm();
     node2.mutex.unlock();
 
-    try std.testing.expectEqual(@as(raftz.LogIndex, 1), last_log_index);
-    try std.testing.expectEqual(@as(raftz.Term, 1), last_log_term);
+    try std.testing.expectEqual(@as(LogIndex, 1), last_log_index);
+    try std.testing.expectEqual(@as(Term, 1), last_log_term);
 
     const vote_req = RequestVoteRequest{
         .term = 2,
@@ -121,11 +127,11 @@ test "Safety: State Machine Safety - no conflicting entries applied" {
     try node2.applyCommitted();
 
     node1.mutex.lock();
-    try std.testing.expectEqual(@as(raftz.LogIndex, 1), node1.volatile_state.last_applied);
+    try std.testing.expectEqual(@as(LogIndex, 1), node1.volatile_state.last_applied);
     node1.mutex.unlock();
 
     node2.mutex.lock();
-    try std.testing.expectEqual(@as(raftz.LogIndex, 1), node2.volatile_state.last_applied);
+    try std.testing.expectEqual(@as(LogIndex, 1), node2.volatile_state.last_applied);
     node2.mutex.unlock();
 }
 
@@ -166,7 +172,7 @@ test "Safety: Committed entries from previous terms" {
     try s1.startElection();
     try s1.becomeLeader();
 
-    try std.testing.expectEqual(@as(raftz.Term, 4), s1.getCurrentTerm());
+    try std.testing.expectEqual(@as(Term, 4), s1.getCurrentTerm());
 
     s1.mutex.lock();
     const commit_before = s1.volatile_state.commit_index;
@@ -175,7 +181,7 @@ test "Safety: Committed entries from previous terms" {
     try std.testing.expect(commit_before < 2);
 
     const idx = try s1.submitCommand("cmd_term4");
-    try std.testing.expectEqual(@as(raftz.LogIndex, 3), idx);
+    try std.testing.expectEqual(@as(LogIndex, 3), idx);
 }
 
 test "Safety: Log Matching Property" {
@@ -235,7 +241,7 @@ test "Safety: Only committed entries are applied" {
     try node.applyCommitted();
 
     node.mutex.lock();
-    try std.testing.expectEqual(@as(raftz.LogIndex, 1), node.volatile_state.last_applied);
+    try std.testing.expectEqual(@as(LogIndex, 1), node.volatile_state.last_applied);
     node.mutex.unlock();
 
     node.mutex.lock();
@@ -245,7 +251,7 @@ test "Safety: Only committed entries are applied" {
     try node.applyCommitted();
 
     node.mutex.lock();
-    try std.testing.expectEqual(@as(raftz.LogIndex, 2), node.volatile_state.last_applied);
+    try std.testing.expectEqual(@as(LogIndex, 2), node.volatile_state.last_applied);
     node.mutex.unlock();
 }
 
@@ -257,7 +263,7 @@ test "Safety: Term monotonically increases" {
 
     const node = try cluster.addNode(test_utils.testConfig(1));
 
-    var previous_term: raftz.Term = 0;
+    var previous_term: Term = 0;
 
     for (0..10) |_| {
         try node.startElection();
@@ -303,13 +309,13 @@ test "Safety: Applied entries persist across restarts" {
     std.fs.cwd().makeDir(dir_path) catch {};
     defer std.fs.cwd().deleteTree(dir_path) catch {};
 
-    var storage = try raftz.Storage.init(allocator, dir_path);
+    var storage = try Storage.init(allocator, dir_path);
     defer storage.deinit();
 
-    const servers = [_]raftz.ServerId{ 1, 2, 3 };
-    const cluster = raftz.ClusterConfig{ .servers = &servers };
+    const servers = [_]ServerId{ 1, 2, 3 };
+    const cluster = ClusterConfig{ .servers = &servers };
 
-    var kv = raftz.KvStore.init(allocator);
+    var kv = KvStore.init(allocator);
     defer kv.deinit();
 
     {
@@ -330,12 +336,12 @@ test "Safety: Applied entries persist across restarts" {
         try node.applyCommitted();
 
         node.mutex.lock();
-        try std.testing.expectEqual(@as(raftz.LogIndex, 1), node.volatile_state.last_applied);
+        try std.testing.expectEqual(@as(LogIndex, 1), node.volatile_state.last_applied);
         node.mutex.unlock();
     }
 
     {
-        var kv2 = raftz.KvStore.init(allocator);
+        var kv2 = KvStore.init(allocator);
         defer kv2.deinit();
 
         var node = try Node.init(
@@ -348,7 +354,7 @@ test "Safety: Applied entries persist across restarts" {
         defer node.deinit();
 
         node.mutex.lock();
-        try std.testing.expectEqual(@as(raftz.LogIndex, 1), node.volatile_state.last_applied);
+        try std.testing.expectEqual(@as(LogIndex, 1), node.volatile_state.last_applied);
         node.mutex.unlock();
     }
 }

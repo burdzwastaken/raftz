@@ -32,6 +32,8 @@ const PersistentState = struct {
 const VolatileState = struct {
     commit_index: LogIndex = 0,
     last_applied: LogIndex = 0,
+    cached_read_index: LogIndex = 0,
+    cached_read_timestamp: i64 = 0,
 };
 
 /// Pending read index request awaiting leadership confirmation
@@ -571,6 +573,11 @@ pub const Node = struct {
             );
         }
 
+        if (request.leader_commit > self.volatile_state.cached_read_index) {
+            self.volatile_state.cached_read_index = request.leader_commit;
+            self.volatile_state.cached_read_timestamp = std.time.milliTimestamp();
+        }
+
         return .{
             .term = self.persistent.current_term,
             .success = true,
@@ -797,7 +804,7 @@ pub const Node = struct {
     }
 
     /// Request a read index for linearizable reads
-    pub fn requestReadIndex(self: *Node) !LogIndex {
+    pub fn requestReadIndex(self: *Node) !u64 {
         self.mutex.lock();
         defer self.mutex.unlock();
 
@@ -814,17 +821,17 @@ pub const Node = struct {
         try leader_state.pending_reads.append(self.allocator, .{
             .read_id = read_id,
             .read_index = read_index,
-            .acks = 1, // leader counts as one ack
+            .acks = 0,
             .timestamp = std.time.milliTimestamp(),
         });
 
-        logging.debug("Node {d}: ReadIndex request {d} at commit_index={d}", .{
+        logging.debug("Node {d}: ReadIndex request {d} at commit_index={d}, needs heartbeat confirmation", .{
             self.config.id,
             read_id,
             read_index,
         });
 
-        return read_index;
+        return read_id;
     }
 
     /// Handle ReadIndex RPC from followers
@@ -858,18 +865,15 @@ pub const Node = struct {
         };
     }
 
-    /// Record ack for a pending read index request
-    pub fn ackReadIndex(self: *Node, read_id: u64) !void {
+    /// Record heartbeat ack which confirms pending read index requests
+    pub fn ackPendingReads(self: *Node) void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
         const leader_state = &(self.leader orelse return);
 
         for (leader_state.pending_reads.items) |*read_state| {
-            if (read_state.read_id == read_id) {
-                read_state.acks += 1;
-                break;
-            }
+            read_state.acks += 1;
         }
     }
 
@@ -898,6 +902,58 @@ pub const Node = struct {
         }
 
         return confirmed_index;
+    }
+
+    /// Clean up expired read index requests that have timed out
+    pub fn cleanupExpiredReads(self: *Node) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const leader_state = &(self.leader orelse return);
+        const now = std.time.milliTimestamp();
+        const timeout_ms: i64 = @intCast(self.config.read_timeout);
+
+        var i: usize = 0;
+        while (i < leader_state.pending_reads.items.len) {
+            const read_state = leader_state.pending_reads.items[i];
+            const elapsed = now - read_state.timestamp;
+
+            if (elapsed >= timeout_ms) {
+                logging.warn("Node {d}: ReadIndex request {d} timed out after {d}ms", .{
+                    self.config.id,
+                    read_state.read_id,
+                    elapsed,
+                });
+                _ = leader_state.pending_reads.swapRemove(i);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    /// Get cached read index (for follower reads)
+    pub fn getCachedReadIndex(self: *Node) ?LogIndex {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.role == .leader) {
+            return null;
+        }
+
+        const now = std.time.milliTimestamp();
+        const cache_age = now - self.volatile_state.cached_read_timestamp;
+        const max_cache_age: i64 = @intCast(self.config.heartbeat_interval * 2);
+
+        if (cache_age <= max_cache_age and self.volatile_state.cached_read_index > 0) {
+            logging.debug("Node {d}: Using cached read_index={d} (age={d}ms)", .{
+                self.config.id,
+                self.volatile_state.cached_read_index,
+                cache_age,
+            });
+            return self.volatile_state.cached_read_index;
+        }
+
+        return null;
     }
 };
 

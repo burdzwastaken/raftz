@@ -6,9 +6,10 @@ const test_utils = @import("test_utils.zig");
 
 const Node = raftz.Node;
 const Role = raftz.Role;
-const ServerId = raftz.ServerId;
 const Term = raftz.Term;
+const AppendEntriesRequest = raftz.AppendEntriesRequest;
 const RequestVoteRequest = raftz.RequestVoteRequest;
+const PreVoteRequest = raftz.PreVoteRequest;
 
 test "Leader Election: Basic election succeeds" {
     const allocator = std.testing.allocator;
@@ -227,7 +228,7 @@ test "Leader Election: Pre-vote prevents disruption" {
 
     const initial_term = node1.getCurrentTerm();
 
-    const heartbeat = raftz.AppendEntriesRequest{
+    const heartbeat = AppendEntriesRequest{
         .term = initial_term,
         .leader_id = 1,
         .prev_log_index = 0,
@@ -335,7 +336,7 @@ test "Leader Election: PreVote doesn't increment term" {
     try node1.becomeLeader();
     const initial_term = node1.getCurrentTerm();
 
-    const pre_vote_req = raftz.PreVoteRequest{
+    const pre_vote_req = PreVoteRequest{
         .term = initial_term + 1,
         .candidate_id = 2,
         .last_log_index = 0,
@@ -362,7 +363,7 @@ test "Leader Election: PreVote granted when no recent leader" {
 
     cluster.tick(350);
 
-    const pre_vote_req = raftz.PreVoteRequest{
+    const pre_vote_req = PreVoteRequest{
         .term = 1,
         .candidate_id = 2,
         .last_log_index = 0,
@@ -392,7 +393,7 @@ test "Leader Election: PreVote rejects stale candidate" {
     node1.mutex.unlock();
     _ = try node1.submitCommand("cmd1");
 
-    const pre_vote_req = raftz.PreVoteRequest{
+    const pre_vote_req = PreVoteRequest{
         .term = 4,
         .candidate_id = 2,
         .last_log_index = 0,

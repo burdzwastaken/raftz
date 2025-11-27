@@ -37,6 +37,8 @@ pub const Config = struct {
     max_append_entries: usize = 100,
     /// Enable pre-vote optimization to prevent disruptions from partitioned nodes (default: true)
     enable_prevote: bool = true,
+    /// Timeout for ReadIndex requests in milliseconds (default: 5000ms)
+    read_timeout: u64 = 5000,
 
     /// Validates configuration parameters
     pub fn validate(self: Config) !void {

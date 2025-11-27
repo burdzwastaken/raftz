@@ -147,6 +147,8 @@ pub const Server = struct {
             defer self.node.mutex.unlock();
             self.node.last_heartbeat = std.time.milliTimestamp();
         }
+
+        self.node.cleanupExpiredReads();
     }
 
     fn runPreVote(self: *Server) !void {
@@ -362,6 +364,8 @@ pub const Server = struct {
             const new_match_index = response.match_index;
             try leader_state.match_index.put(peer_id, new_match_index);
             try leader_state.next_index.put(peer_id, new_match_index + 1);
+
+            self.node.ackPendingReads();
 
             try self.advanceCommitIndex();
         } else {

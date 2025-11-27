@@ -13,6 +13,8 @@ Implementation of the [Raft consensus algorithm](https://raft.github.io/raft.pdf
 - **Persistence** - Durable state storage with snapshot support for efficient recovery
 - **Pluggable State Machines** - Bring your own state machine or use the built-in key-value store
 - **Network Transport** - TCP-based RPC communication between cluster nodes
+- **Pre-vote Optimization** - Reduces election disruptions from partitioned nodes
+- **ReadIndex Protocol** - Linearizable reads with heartbeat confirmation and follower caching
 
 ## Quick Start
 
@@ -97,12 +99,6 @@ zig build run-cluster
 
 ### Advanced Raft Features
 - [ ] Dynamic membership changes (addServer/removeServer RPCs)
-- [x] Pre-vote optimization to reduce election disruptions
-- [x] ReadIndex protocol
-  - [ ] Integrate ReadIndex with heartbeat responses for real democracy!
-  - [ ] Add timeout for stale read requests
-  - [ ] Implement follower read index caching
-  - [ ] Add moar ReadIndex tests
 - [ ] Leadership transfer / graceful handoff
 - [ ] Non-voting members (learners)
 - [ ] Witness members
