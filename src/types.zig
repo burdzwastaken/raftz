@@ -39,6 +39,8 @@ pub const Config = struct {
     enable_prevote: bool = true,
     /// Timeout for ReadIndex requests in milliseconds (default: 5000ms)
     read_timeout: u64 = 5000,
+    /// Timeout for leadership transfer in milliseconds (default: election_timeout_max)
+    leadership_transfer_timeout: ?u64 = null,
 
     /// Validates configuration parameters
     pub fn validate(self: Config) !void {

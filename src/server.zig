@@ -131,6 +131,16 @@ pub const Server = struct {
     }
 
     fn leaderTick(self: *Server) !void {
+        if (self.node.isLeadershipTransferTimeout()) {
+            logging.warn("Node {d}: Leadership transfer timed out, aborting", .{self.node.config.id});
+            self.node.abortLeadershipTransfer();
+        }
+
+        if (self.node.isTransferTargetReady()) {
+            try self.finalizeLeadershipTransfer();
+            return;
+        }
+
         const last_heartbeat = blk: {
             self.node.mutex.lock();
             defer self.node.mutex.unlock();
@@ -149,6 +159,51 @@ pub const Server = struct {
         }
 
         self.node.cleanupExpiredReads();
+    }
+
+    fn finalizeLeadershipTransfer(self: *Server) !void {
+        const target = blk: {
+            self.node.mutex.lock();
+            defer self.node.mutex.unlock();
+            break :blk self.node.transfer_target orelse return;
+        };
+
+        const request = blk: {
+            self.node.mutex.lock();
+            defer self.node.mutex.unlock();
+
+            break :blk rpc.TimeoutNowRequest{
+                .term = self.node.persistent.current_term,
+                .leader_id = self.node.config.id,
+            };
+        };
+
+        logging.info("Node {d}: Sending TimeoutNow to {d} to complete leadership transfer", .{
+            self.node.config.id,
+            target,
+        });
+
+        _ = self.transport.sendTimeoutNow(target, request) catch |err| {
+            logging.err("Node {d}: Failed to send TimeoutNow to {d}: {}", .{
+                self.node.config.id,
+                target,
+                err,
+            });
+            self.node.abortLeadershipTransfer();
+            return;
+        };
+
+        self.node.mutex.lock();
+        defer self.node.mutex.unlock();
+        self.node.transferring_leadership = false;
+        self.node.transfer_target = null;
+        self.node.role = .follower;
+        if (self.node.leader) |*leader| {
+            leader.deinit(self.allocator);
+            self.node.leader = null;
+        }
+
+        logging.info("Node {d}: Stepped down after leadership transfer", .{self.node.config.id});
     }
 
     fn runPreVote(self: *Server) !void {

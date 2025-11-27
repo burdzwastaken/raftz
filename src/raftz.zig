@@ -64,6 +64,10 @@ pub const AppendEntriesRequest = rpc.AppendEntriesRequest;
 pub const ReadIndexRequest = rpc.ReadIndexRequest;
 /// RPC response for ReadIndex protocol
 pub const ReadIndexResponse = rpc.ReadIndexResponse;
+/// RPC request to immediately start election (leadership transfer)
+pub const TimeoutNowRequest = rpc.TimeoutNowRequest;
+/// RPC response for TimeoutNow
+pub const TimeoutNowResponse = rpc.TimeoutNowResponse;
 
 test {
     std.testing.refAllDecls(@This());

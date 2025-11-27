@@ -96,6 +96,9 @@ pub const Node = struct {
     current_leader: ?ServerId,
     last_heartbeat: i64,
     election_timeout: u64,
+    transferring_leadership: bool,
+    transfer_target: ?ServerId,
+    transfer_start_time: i64,
     mutex: std.Thread.Mutex,
 
     /// Initialize a new Raft node
@@ -125,6 +128,9 @@ pub const Node = struct {
             .current_leader = null,
             .last_heartbeat = std.time.milliTimestamp(),
             .election_timeout = config.randomElectionTimeout(),
+            .transferring_leadership = false,
+            .transfer_target = null,
+            .transfer_start_time = 0,
             .mutex = .{},
         };
 
@@ -954,6 +960,120 @@ pub const Node = struct {
         }
 
         return null;
+    }
+
+    /// Initiate leadership transfer to target server
+    pub fn transferLeadership(self: *Node, target: ServerId) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.role != .leader) {
+            return error.NotLeader;
+        }
+
+        if (target == self.config.id) {
+            return error.CannotTransferToSelf;
+        }
+
+        var is_valid_target = false;
+        for (self.cluster.servers) |server_id| {
+            if (server_id == target) {
+                is_valid_target = true;
+                break;
+            }
+        }
+
+        if (!is_valid_target) {
+            return error.InvalidTransferTarget;
+        }
+
+        self.transferring_leadership = true;
+        self.transfer_target = target;
+        self.transfer_start_time = std.time.milliTimestamp();
+
+        logging.info("Node {d}: Starting leadership transfer to {d}", .{
+            self.config.id,
+            target,
+        });
+    }
+
+    /// Check if target is caught up and ready for leadership transfer
+    pub fn isTransferTargetReady(self: *Node) bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (!self.transferring_leadership) return false;
+
+        const target = self.transfer_target orelse return false;
+        const leader_state = &(self.leader orelse return false);
+
+        const target_match = leader_state.match_index.get(target) orelse 0;
+        const our_last_index = self.log.lastIndex();
+
+        return target_match >= our_last_index;
+    }
+
+    /// Abort an ongoing leadership transfer
+    pub fn abortLeadershipTransfer(self: *Node) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.transferring_leadership) {
+            logging.info("Node {d}: Aborting leadership transfer to {d}", .{
+                self.config.id,
+                self.transfer_target.?,
+            });
+            self.transferring_leadership = false;
+            self.transfer_target = null;
+            self.transfer_start_time = 0;
+        }
+    }
+
+    /// Handle TimeoutNow RPC - immediately start election
+    pub fn handleTimeoutNow(self: *Node, request: rpc.TimeoutNowRequest) !rpc.TimeoutNowResponse {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (request.term < self.persistent.current_term) {
+            return .{ .term = self.persistent.current_term };
+        }
+
+        if (request.term > self.persistent.current_term) {
+            self.persistent.current_term = request.term;
+            self.persistent.voted_for = null;
+            self.role = .follower;
+
+            if (self.storage) |storage| {
+                try storage.saveState(
+                    self.persistent.current_term,
+                    self.persistent.voted_for,
+                    self.volatile_state.last_applied,
+                );
+            }
+        }
+
+        logging.info("Node {d}: Received TimeoutNow from {d}, starting election immediately", .{
+            self.config.id,
+            request.leader_id,
+        });
+
+        self.last_heartbeat = 0;
+
+        return .{ .term = self.persistent.current_term };
+    }
+
+    /// Check if leadership transfer has timed out
+    pub fn isLeadershipTransferTimeout(self: *Node) bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (!self.transferring_leadership) return false;
+
+        const now = std.time.milliTimestamp();
+        const elapsed: u64 = @intCast(now - self.transfer_start_time);
+        const timeout = self.config.leadership_transfer_timeout orelse self.config.election_timeout_max;
+
+        return elapsed >= timeout;
     }
 };
 

@@ -15,6 +15,7 @@ Implementation of the [Raft consensus algorithm](https://raft.github.io/raft.pdf
 - **Network Transport** - TCP-based RPC communication between cluster nodes
 - **Pre-vote Optimization** - Reduces election disruptions from partitioned nodes
 - **ReadIndex Protocol** - Linearizable reads with heartbeat confirmation and follower caching
+- **Leadership Transfer** - Graceful leader handoff for maintenance and load balancing
 
 ## Quick Start
 
@@ -99,7 +100,6 @@ zig build run-cluster
 
 ### Advanced Raft Features
 - [ ] Dynamic membership changes (addServer/removeServer RPCs)
-- [ ] Leadership transfer / graceful handoff
 - [ ] Non-voting members (learners)
 - [ ] Witness members
 - [ ] Client request dedup'n (idempotent updates)

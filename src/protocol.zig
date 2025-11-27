@@ -18,6 +18,8 @@ pub const MessageType = enum(u8) {
     pre_vote_response = 8,
     read_index_request = 9,
     read_index_response = 10,
+    timeout_now_request = 11,
+    timeout_now_response = 12,
 };
 
 /// Wire format for messages
@@ -32,6 +34,8 @@ pub const Message = union(MessageType) {
     pre_vote_response: rpc.PreVoteResponse,
     read_index_request: rpc.ReadIndexRequest,
     read_index_response: rpc.ReadIndexResponse,
+    timeout_now_request: rpc.TimeoutNowRequest,
+    timeout_now_response: rpc.TimeoutNowResponse,
 };
 
 /// Serialize a message to binary format
@@ -103,6 +107,13 @@ pub fn serialize(allocator: Allocator, msg: Message) ![]const u8 {
             try writer.writeInt(u64, resp.term, .little);
             try writer.writeInt(u64, resp.read_index, .little);
             try writer.writeByte(if (resp.success) 1 else 0);
+        },
+        .timeout_now_request => |req| {
+            try writer.writeInt(u64, req.term, .little);
+            try writer.writeInt(u64, req.leader_id, .little);
+        },
+        .timeout_now_response => |resp| {
+            try writer.writeInt(u64, resp.term, .little);
         },
     }
 
@@ -223,6 +234,17 @@ pub fn deserialize(allocator: Allocator, data: []const u8) !Message {
                 .term = try reader.readInt(u64, .little),
                 .read_index = try reader.readInt(u64, .little),
                 .success = (try reader.readByte()) != 0,
+            },
+        },
+        .timeout_now_request => .{
+            .timeout_now_request = .{
+                .term = try reader.readInt(u64, .little),
+                .leader_id = try reader.readInt(u64, .little),
+            },
+        },
+        .timeout_now_response => .{
+            .timeout_now_response = .{
+                .term = try reader.readInt(u64, .little),
             },
         },
     };

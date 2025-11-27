@@ -83,3 +83,14 @@ pub const ReadIndexResponse = struct {
     read_index: LogIndex,
     success: bool,
 };
+
+/// Request to immediately start election (used for leadership transfer)
+pub const TimeoutNowRequest = struct {
+    term: Term,
+    leader_id: ServerId,
+};
+
+/// Response to TimeoutNow RPC
+pub const TimeoutNowResponse = struct {
+    term: Term,
+};

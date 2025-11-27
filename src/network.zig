@@ -316,6 +316,23 @@ pub const Transport = struct {
         };
     }
 
+    pub fn sendTimeoutNow(
+        self: *Transport,
+        target: ServerId,
+        request: rpc.TimeoutNowRequest,
+    ) !rpc.TimeoutNowResponse {
+        var conn = try self.connectToPeer(target);
+        defer conn.close(self.allocator);
+
+        const request_msg = protocol.Message{ .timeout_now_request = request };
+        const response_msg = try conn.sendRequest(self.allocator, request_msg, self.timeout_ms);
+
+        return switch (response_msg) {
+            .timeout_now_response => |resp| resp,
+            else => error.InvalidResponse,
+        };
+    }
+
     pub fn handleConnection(self: *Transport, node: anytype, conn: *Connection) !void {
         defer conn.close(self.allocator);
 
@@ -342,6 +359,9 @@ pub const Transport = struct {
                 },
                 .read_index_request => |req| .{
                     .read_index_response = node.handleReadIndex(req),
+                },
+                .timeout_now_request => |req| .{
+                    .timeout_now_response = try node.handleTimeoutNow(req),
                 },
                 else => return error.InvalidRequest,
             };

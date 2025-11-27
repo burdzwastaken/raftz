@@ -32,6 +32,7 @@ pub fn build(b: *std.Build) void {
     addIntegrationTest(b, target, optimize, raft_module, "tests/log_replication_test.zig", "test-replication", test_step, "Test log replication");
     addIntegrationTest(b, target, optimize, raft_module, "tests/safety_test.zig", "test-safety", test_step, "Test safety properties");
     addIntegrationTest(b, target, optimize, raft_module, "tests/read_index_test.zig", "test-read-index", test_step, "Test ReadIndex protocol");
+    addIntegrationTest(b, target, optimize, raft_module, "tests/leadership_transfer_test.zig", "test-leadership-transfer", test_step, "Test leadership transfer");
 
     const docs_module = b.createModule(.{
         .root_source_file = b.path("src/raftz.zig"),
