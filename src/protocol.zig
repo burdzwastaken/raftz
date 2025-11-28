@@ -1,6 +1,7 @@
 const std = @import("std");
 const rpc = @import("rpc.zig");
 const log_mod = @import("log.zig");
+const types = @import("types.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -20,6 +21,10 @@ pub const MessageType = enum(u8) {
     read_index_response = 10,
     timeout_now_request = 11,
     timeout_now_response = 12,
+    add_server_request = 13,
+    add_server_response = 14,
+    remove_server_request = 15,
+    remove_server_response = 16,
 };
 
 /// Wire format for messages
@@ -36,6 +41,10 @@ pub const Message = union(MessageType) {
     read_index_response: rpc.ReadIndexResponse,
     timeout_now_request: rpc.TimeoutNowRequest,
     timeout_now_response: rpc.TimeoutNowResponse,
+    add_server_request: rpc.AddServerRequest,
+    add_server_response: rpc.AddServerResponse,
+    remove_server_request: rpc.RemoveServerRequest,
+    remove_server_response: rpc.RemoveServerResponse,
 };
 
 /// Serialize a message to binary format
@@ -67,8 +76,29 @@ pub fn serialize(allocator: Allocator, msg: Message) ![]const u8 {
             for (req.entries) |entry| {
                 try writer.writeInt(u64, entry.term, .little);
                 try writer.writeInt(u64, entry.index, .little);
-                try writer.writeInt(u64, @intCast(entry.command.len), .little);
-                try writer.writeAll(entry.command);
+                switch (entry.data) {
+                    .command => |cmd| {
+                        try writer.writeByte(0);
+                        try writer.writeInt(u64, @intCast(cmd.len), .little);
+                        try writer.writeAll(cmd);
+                    },
+                    .configuration => |cfg| {
+                        try writer.writeByte(1);
+                        try writer.writeInt(u64, @intCast(cfg.old_servers.len), .little);
+                        for (cfg.old_servers) |server_id| {
+                            try writer.writeInt(u64, server_id, .little);
+                        }
+                        const has_new = cfg.new_servers != null;
+                        try writer.writeByte(if (has_new) 1 else 0);
+                        if (has_new) {
+                            const new = cfg.new_servers.?;
+                            try writer.writeInt(u64, @intCast(new.len), .little);
+                            for (new) |server_id| {
+                                try writer.writeInt(u64, server_id, .little);
+                            }
+                        }
+                    },
+                }
             }
             try writer.writeInt(u64, req.leader_commit, .little);
         },
@@ -115,6 +145,22 @@ pub fn serialize(allocator: Allocator, msg: Message) ![]const u8 {
         .timeout_now_response => |resp| {
             try writer.writeInt(u64, resp.term, .little);
         },
+        .add_server_request => |req| {
+            try writer.writeInt(u64, req.new_server, .little);
+        },
+        .add_server_response => |resp| {
+            try writer.writeInt(u64, resp.term, .little);
+            try writer.writeByte(if (resp.success) 1 else 0);
+            try writer.writeInt(u64, resp.leader_id orelse 0, .little);
+        },
+        .remove_server_request => |req| {
+            try writer.writeInt(u64, req.old_server, .little);
+        },
+        .remove_server_response => |resp| {
+            try writer.writeInt(u64, resp.term, .little);
+            try writer.writeByte(if (resp.success) 1 else 0);
+            try writer.writeInt(u64, resp.leader_id orelse 0, .little);
+        },
     }
 
     return list.toOwnedSlice(allocator);
@@ -156,10 +202,36 @@ pub fn deserialize(allocator: Allocator, data: []const u8) !Message {
             for (entries) |*entry| {
                 entry.term = try reader.readInt(u64, .little);
                 entry.index = try reader.readInt(u64, .little);
-                const cmd_len = try reader.readInt(u64, .little);
-                const command = try allocator.alloc(u8, @intCast(cmd_len));
-                try reader.readNoEof(command);
-                entry.command = command;
+                const entry_type_byte = try reader.readByte();
+
+                if (entry_type_byte == 0) {
+                    const cmd_len = try reader.readInt(u64, .little);
+                    const command = try allocator.alloc(u8, @intCast(cmd_len));
+                    try reader.readNoEof(command);
+                    entry.* = log_mod.LogEntry.command(entry.term, entry.index, command);
+                } else {
+                    const old_servers_len = try reader.readInt(u64, .little);
+                    const old_servers = try allocator.alloc(types.ServerId, @intCast(old_servers_len));
+                    for (old_servers) |*server_id| {
+                        server_id.* = try reader.readInt(u64, .little);
+                    }
+
+                    const has_new = (try reader.readByte()) != 0;
+                    const new_servers = if (has_new) blk: {
+                        const new_servers_len = try reader.readInt(u64, .little);
+                        const new = try allocator.alloc(types.ServerId, @intCast(new_servers_len));
+                        for (new) |*server_id| {
+                            server_id.* = try reader.readInt(u64, .little);
+                        }
+                        break :blk new;
+                    } else null;
+
+                    const config_data = log_mod.ConfigurationData{
+                        .old_servers = old_servers,
+                        .new_servers = new_servers,
+                    };
+                    entry.* = log_mod.LogEntry.configuration(entry.term, entry.index, config_data);
+                }
             }
 
             const leader_commit = try reader.readInt(u64, .little);
@@ -247,14 +319,49 @@ pub fn deserialize(allocator: Allocator, data: []const u8) !Message {
                 .term = try reader.readInt(u64, .little),
             },
         },
+        .add_server_request => .{
+            .add_server_request = .{
+                .new_server = try reader.readInt(u64, .little),
+            },
+        },
+        .add_server_response => {
+            const term = try reader.readInt(u64, .little);
+            const success = (try reader.readByte()) != 0;
+            const leader_id_raw = try reader.readInt(u64, .little);
+            return .{
+                .add_server_response = .{
+                    .term = term,
+                    .success = success,
+                    .leader_id = if (leader_id_raw == 0) null else leader_id_raw,
+                },
+            };
+        },
+        .remove_server_request => .{
+            .remove_server_request = .{
+                .old_server = try reader.readInt(u64, .little),
+            },
+        },
+        .remove_server_response => {
+            const term = try reader.readInt(u64, .little);
+            const success = (try reader.readByte()) != 0;
+            const leader_id_raw = try reader.readInt(u64, .little);
+            return .{
+                .remove_server_response = .{
+                    .term = term,
+                    .success = success,
+                    .leader_id = if (leader_id_raw == 0) null else leader_id_raw,
+                },
+            };
+        },
     };
 }
 
 pub fn freeMessage(allocator: Allocator, msg: Message) void {
     switch (msg) {
         .append_entries_request => |req| {
-            for (req.entries) |entry| {
-                allocator.free(entry.command);
+            for (req.entries) |*entry| {
+                var mutable_entry = entry.*;
+                mutable_entry.data.deinit(allocator);
             }
             allocator.free(req.entries);
         },

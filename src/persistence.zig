@@ -97,11 +97,19 @@ pub const Storage = struct {
             std.mem.writeInt(u64, &buf, entry.index, .little);
             try file.writeAll(&buf);
 
-            const cmd_len: u64 = @intCast(entry.command.len);
-            std.mem.writeInt(u64, &buf, cmd_len, .little);
-            try file.writeAll(&buf);
-
-            try file.writeAll(entry.command);
+            // TODO: support for configuration entries?
+            switch (entry.data) {
+                .command => |cmd| {
+                    const cmd_len: u64 = @intCast(cmd.len);
+                    std.mem.writeInt(u64, &buf, cmd_len, .little);
+                    try file.writeAll(&buf);
+                    try file.writeAll(cmd);
+                },
+                .configuration => {
+                    std.mem.writeInt(u64, &buf, 0, .little);
+                    try file.writeAll(&buf);
+                },
+            }
         }
     }
 
@@ -136,11 +144,7 @@ pub const Storage = struct {
             errdefer self.allocator.free(command);
             _ = try file.readAll(command);
 
-            try log.entries.append(log.allocator, .{
-                .term = term,
-                .index = index,
-                .command = command,
-            });
+            try log.entries.append(log.allocator, LogEntry.command(term, index, command));
         }
     }
 

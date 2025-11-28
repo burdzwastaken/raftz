@@ -42,7 +42,8 @@ pub const MockStorage = struct {
 
     pub fn deinit(self: *MockStorage) void {
         for (self.log_entries.items) |*entry| {
-            self.allocator.free(entry.command);
+            var mutable_entry = entry.*;
+            mutable_entry.data.deinit(self.allocator);
         }
         self.log_entries.deinit(self.allocator);
         if (self.snapshot) |snap| {
@@ -147,7 +148,7 @@ pub const TestCluster = struct {
             .nodes = .{},
             .storages = .{},
             .state_machines = .{},
-            .cluster_config = .{ .servers = server_ids },
+            .cluster_config = ClusterConfig.single(server_ids),
             .server_ids = server_ids,
         };
 

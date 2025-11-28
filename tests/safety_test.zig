@@ -29,7 +29,7 @@ test "Safety: Leader Completeness - committed entry present in new leader" {
     _ = try node1.submitCommand("cmd1");
 
     const entries = [_]LogEntry{
-        .{ .term = 1, .index = 1, .command = "cmd1" },
+        LogEntry.command(1, 1, "cmd1"),
     };
 
     const request = AppendEntriesRequest{
@@ -216,7 +216,7 @@ test "Safety: Log Matching Property" {
             const e1 = node1.log.get(@intCast(i)).?;
             const e2 = node2.log.get(@intCast(i)).?;
             try std.testing.expectEqual(e1.term, e2.term);
-            try std.testing.expectEqualStrings(e1.command, e2.command);
+            try std.testing.expectEqualStrings(switch (e1.data) { .command => |cmd| cmd, .configuration => "", }, switch (e2.data) { .command => |cmd| cmd, .configuration => "", });
         }
     }
 
@@ -287,7 +287,7 @@ test "Safety: Leader never overwrites own log" {
 
     leader.mutex.lock();
     const entry1 = leader.log.get(1).?;
-    const cmd1_copy = try leader.allocator.dupe(u8, entry1.command);
+    const cmd1_copy = try leader.allocator.dupe(u8, switch (entry1.data) { .command => |cmd| cmd, .configuration => "", });
     defer leader.allocator.free(cmd1_copy);
     const term1 = entry1.term;
     leader.mutex.unlock();
@@ -298,7 +298,7 @@ test "Safety: Leader never overwrites own log" {
     leader.mutex.lock();
     const entry1_after = leader.log.get(1).?;
     try std.testing.expectEqual(term1, entry1_after.term);
-    try std.testing.expectEqualStrings(cmd1_copy, entry1_after.command);
+    try std.testing.expectEqualStrings(cmd1_copy, switch (entry1_after.data) { .command => |cmd| cmd, .configuration => "", });
     leader.mutex.unlock();
 }
 
@@ -313,7 +313,7 @@ test "Safety: Applied entries persist across restarts" {
     defer storage.deinit();
 
     const servers = [_]ServerId{ 1, 2, 3 };
-    const cluster = ClusterConfig{ .servers = &servers };
+    const cluster = ClusterConfig.single(&servers);
 
     var kv = KvStore.init(allocator);
     defer kv.deinit();

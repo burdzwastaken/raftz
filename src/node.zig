@@ -295,6 +295,20 @@ pub const Node = struct {
         const elapsed: u64 = @intCast(now - self.last_heartbeat);
         const heard_from_leader = elapsed < self.election_timeout;
 
+        const min_election_timeout = self.config.election_timeout_min;
+        if (elapsed < min_election_timeout and !self.cluster.contains(request.candidate_id)) {
+            logging.debug("Node {d}: Ignoring PreVote from {d} (not in cluster) - heard from leader {d}ms ago (min timeout: {d}ms)", .{
+                self.config.id,
+                request.candidate_id,
+                elapsed,
+                min_election_timeout,
+            });
+            return .{
+                .term = self.persistent.current_term,
+                .vote_granted = false,
+            };
+        }
+
         if (self.role == .leader and heard_from_leader) {
             return .{
                 .term = self.persistent.current_term,
@@ -340,6 +354,7 @@ pub const Node = struct {
         };
     }
 
+    // Handle RequestVote RPC - grant vote if candidates log is at least as up-to-date
     pub fn handleRequestVote(
         self: *Node,
         request: rpc.RequestVoteRequest,
@@ -360,6 +375,22 @@ pub const Node = struct {
         }
 
         if (request.term < self.persistent.current_term) {
+            return .{
+                .term = self.persistent.current_term,
+                .vote_granted = false,
+            };
+        }
+
+        const now = std.time.milliTimestamp();
+        const elapsed: u64 = @intCast(now - self.last_heartbeat);
+        const min_election_timeout = self.config.election_timeout_min;
+        if (elapsed < min_election_timeout and !self.cluster.contains(request.candidate_id)) {
+            logging.debug("Node {d}: Ignoring RequestVote from {d} (not in cluster) - heard from leader {d}ms ago (min timeout: {d}ms)", .{
+                self.config.id,
+                request.candidate_id,
+                elapsed,
+                min_election_timeout,
+            });
             return .{
                 .term = self.persistent.current_term,
                 .vote_granted = false,
@@ -443,6 +474,7 @@ pub const Node = struct {
         };
     }
 
+    // Handle AppendEntries RPC - replicate log entries and update commit index
     pub fn handleAppendEntries(
         self: *Node,
         request: rpc.AppendEntriesRequest,
@@ -488,16 +520,21 @@ pub const Node = struct {
                     .match_index = 0,
                 };
             }
-            if (entry.command.len == 0) {
-                logging.warn("Node {d}: Empty command in log entry at index={d}", .{
-                    self.config.id,
-                    entry.index,
-                });
-                return .{
-                    .term = self.persistent.current_term,
-                    .success = false,
-                    .match_index = 0,
-                };
+            switch (entry.data) {
+                .command => |cmd| {
+                    if (cmd.len == 0) {
+                        logging.warn("Node {d}: Empty command in log entry at index={d}", .{
+                            self.config.id,
+                            entry.index,
+                        });
+                        return .{
+                            .term = self.persistent.current_term,
+                            .success = false,
+                            .match_index = 0,
+                        };
+                    }
+                },
+                .configuration => {},
             }
         }
 
@@ -568,7 +605,15 @@ pub const Node = struct {
 
         for (request.entries) |entry| {
             if (entry.index >= insert_index) {
-                _ = try self.log.append(entry.term, entry.command);
+                switch (entry.data) {
+                    .command => |cmd| {
+                        _ = try self.log.append(entry.term, cmd);
+                    },
+                    .configuration => |cfg| {
+                        const config = cfg.toClusterConfig();
+                        _ = try self.log.appendConfig(entry.term, config);
+                    },
+                }
             }
         }
 
@@ -629,14 +674,99 @@ pub const Node = struct {
         while (self.volatile_state.last_applied < self.volatile_state.commit_index) {
             self.volatile_state.last_applied += 1;
             if (self.log.get(self.volatile_state.last_applied)) |entry| {
-                try self.state_machine.apply(entry.index, entry.command);
-                applied_any = true;
+                switch (entry.data) {
+                    .command => |cmd| {
+                        try self.state_machine.apply(entry.index, cmd);
+                        applied_any = true;
+                    },
+                    .configuration => |cfg| {
+                        try self.applyConfigurationChange(cfg);
+                        applied_any = true;
+                    },
+                }
             }
         }
 
         if (applied_any) {
             if (self.storage) |storage| {
                 try storage.saveState(self.persistent.current_term, self.persistent.voted_for, self.volatile_state.last_applied);
+            }
+        }
+    }
+
+    fn applyConfigurationChange(self: *Node, config_data: log_mod.ConfigurationData) !void {
+        const new_config = config_data.toClusterConfig();
+
+        if (new_config.config_type == .joint) {
+            logging.info("Node {d}: Applying old,new configuration", .{self.config.id});
+
+            if (self.cluster.new_servers) |old_new| {
+                self.allocator.free(old_new);
+            }
+
+            self.cluster = new_config;
+
+            if (self.role == .leader) {
+                const final_config = ClusterConfig.single(new_config.new_servers.?);
+                const config_index = try self.log.appendConfig(self.persistent.current_term, final_config);
+
+                if (self.storage) |storage| {
+                    try storage.saveLog(&self.log);
+                }
+
+                logging.info("Node {d}: Appended new configuration at index {d}", .{
+                    self.config.id,
+                    config_index,
+                });
+            }
+        } else {
+            logging.info("Node {d}: Applying new configuration", .{self.config.id});
+
+            if (self.cluster.new_servers) |old_new| {
+                self.allocator.free(old_new);
+            }
+
+            const old_cluster = self.cluster;
+            self.cluster = new_config;
+
+            if (self.role == .leader) {
+                if (self.leader) |*leader| {
+                    try self.updateReplicationIndices(leader, old_cluster, new_config);
+                }
+
+                if (!new_config.contains(self.config.id)) {
+                    logging.info("Node {d}: Not in new configuration, stepping down", .{self.config.id});
+                    try self.stepDownLocked(self.persistent.current_term);
+                }
+            }
+        }
+    }
+
+    fn updateReplicationIndices(
+        self: *Node,
+        leader: *LeaderState,
+        old_config: ClusterConfig,
+        new_config: ClusterConfig,
+    ) !void {
+        for (new_config.servers) |server_id| {
+            if (!old_config.contains(server_id)) {
+                try leader.next_index.put(server_id, self.log.lastIndex() + 1);
+                try leader.match_index.put(server_id, 0);
+                logging.debug("Node {d}: Added replication indices for new server {d}", .{
+                    self.config.id,
+                    server_id,
+                });
+            }
+        }
+
+        for (old_config.servers) |server_id| {
+            if (!new_config.contains(server_id)) {
+                _ = leader.next_index.remove(server_id);
+                _ = leader.match_index.remove(server_id);
+                logging.debug("Node {d}: Removed replication indices for old server {d}", .{
+                    self.config.id,
+                    server_id,
+                });
             }
         }
     }
@@ -710,6 +840,7 @@ pub const Node = struct {
         }
     }
 
+    // Handle InstallSnapshot RPC - install snapshot from leader
     pub fn handleInstallSnapshot(
         self: *Node,
         request: rpc.InstallSnapshotRequest,
@@ -1075,6 +1206,138 @@ pub const Node = struct {
 
         return elapsed >= timeout;
     }
+
+    /// Handle AddServer RPC - add a new server to the cluster
+    pub fn handleAddServer(self: *Node, request: rpc.AddServerRequest) !rpc.AddServerResponse {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.role != .leader) {
+            return .{
+                .term = self.persistent.current_term,
+                .success = false,
+                .leader_id = self.current_leader,
+            };
+        }
+
+        if (self.cluster.contains(request.new_server)) {
+            logging.warn("Node {d}: Server {d} is already in the cluster", .{
+                self.config.id,
+                request.new_server,
+            });
+            return .{
+                .term = self.persistent.current_term,
+                .success = false,
+                .leader_id = self.config.id,
+            };
+        }
+
+        if (self.cluster.config_type == .joint) {
+            logging.warn("Node {d}: Configuration change already in progress", .{self.config.id});
+            return .{
+                .term = self.persistent.current_term,
+                .success = false,
+                .leader_id = self.config.id,
+            };
+        }
+
+        var new_servers = try self.allocator.alloc(ServerId, self.cluster.servers.len + 1);
+        errdefer self.allocator.free(new_servers);
+
+        @memcpy(new_servers[0..self.cluster.servers.len], self.cluster.servers);
+        new_servers[self.cluster.servers.len] = request.new_server;
+
+        const joint_config = ClusterConfig.joint(self.cluster.servers, new_servers);
+
+        const config_index = try self.log.appendConfig(self.persistent.current_term, joint_config);
+
+        if (self.storage) |storage| {
+            try storage.saveLog(&self.log);
+        }
+
+        logging.info("Node {d}: Appended C_old,new configuration at index {d}, adding server {d}", .{
+            self.config.id,
+            config_index,
+            request.new_server,
+        });
+
+        if (self.leader) |*leader| {
+            try leader.next_index.put(request.new_server, self.log.lastIndex() + 1);
+            try leader.match_index.put(request.new_server, 0);
+        }
+
+        return .{
+            .term = self.persistent.current_term,
+            .success = true,
+            .leader_id = self.config.id,
+        };
+    }
+
+    /// Handle RemoveServer RPC - remove a server from the cluster
+    pub fn handleRemoveServer(self: *Node, request: rpc.RemoveServerRequest) !rpc.RemoveServerResponse {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.role != .leader) {
+            return .{
+                .term = self.persistent.current_term,
+                .success = false,
+                .leader_id = self.current_leader,
+            };
+        }
+
+        if (!self.cluster.contains(request.old_server)) {
+            logging.warn("Node {d}: Server {d} is not in the cluster", .{
+                self.config.id,
+                request.old_server,
+            });
+            return .{
+                .term = self.persistent.current_term,
+                .success = false,
+                .leader_id = self.config.id,
+            };
+        }
+
+        if (self.cluster.config_type == .joint) {
+            logging.warn("Node {d}: Configuration change already in progress", .{self.config.id});
+            return .{
+                .term = self.persistent.current_term,
+                .success = false,
+                .leader_id = self.config.id,
+            };
+        }
+
+        var new_servers = try self.allocator.alloc(ServerId, self.cluster.servers.len - 1);
+        errdefer self.allocator.free(new_servers);
+
+        var idx: usize = 0;
+        for (self.cluster.servers) |server_id| {
+            if (server_id != request.old_server) {
+                new_servers[idx] = server_id;
+                idx += 1;
+            }
+        }
+
+        const joint_config = ClusterConfig.joint(self.cluster.servers, new_servers);
+
+        const config_index = try self.log.appendConfig(self.persistent.current_term, joint_config);
+
+        if (self.storage) |storage| {
+            try storage.saveLog(&self.log);
+        }
+
+        logging.info("Node {d}: Appended C_old,new configuration at index {d}, removing server {d}", .{
+            self.config.id,
+            config_index,
+            request.old_server,
+        });
+
+        return .{
+            .term = self.persistent.current_term,
+            .success = true,
+            .leader_id = self.config.id,
+        };
+    }
 };
 
 test "Node initialization" {
@@ -1084,7 +1347,7 @@ test "Node initialization" {
     defer kv.deinit();
 
     const servers = [_]ServerId{ 1, 2, 3 };
-    const cluster = ClusterConfig{ .servers = &servers };
+    const cluster = ClusterConfig.single(&servers);
 
     var node = try Node.init(
         allocator,

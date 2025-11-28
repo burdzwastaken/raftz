@@ -43,7 +43,7 @@ test "Log Replication: Follower accepts matching entries" {
     _ = try leader.submitCommand("cmd1");
 
     const entries = [_]LogEntry{
-        .{ .term = 1, .index = 1, .command = "cmd1" },
+        LogEntry.command(1, 1, "cmd1"),
     };
 
     const request = AppendEntriesRequest{
@@ -77,7 +77,7 @@ test "Log Replication: Follower rejects mismatched prev_log" {
     follower.mutex.unlock();
 
     const entries = [_]LogEntry{
-        .{ .term = 1, .index = 2, .command = "cmd2" },
+        LogEntry.command(1, 2, "cmd2"),
     };
 
     const request = AppendEntriesRequest{
@@ -113,7 +113,7 @@ test "Log Replication: Follower deletes conflicting entries" {
     follower.mutex.unlock();
 
     const entries = [_]LogEntry{
-        .{ .term = 1, .index = 2, .command = "new_cmd2" },
+        LogEntry.command(1, 2, "new_cmd2"),
     };
 
     const request = AppendEntriesRequest{
@@ -132,7 +132,7 @@ test "Log Replication: Follower deletes conflicting entries" {
     follower.mutex.lock();
     try std.testing.expectEqual(@as(LogIndex, 2), follower.log.lastIndex());
     const entry2 = follower.log.get(2).?;
-    try std.testing.expectEqualStrings("new_cmd2", entry2.command);
+    try std.testing.expectEqualStrings("new_cmd2", switch (entry2.data) { .command => |cmd| cmd, .configuration => "", });
     follower.mutex.unlock();
 }
 
@@ -148,8 +148,8 @@ test "Log Replication: Follower updates commit index" {
     try leader.becomeLeader();
 
     const entries = [_]LogEntry{
-        .{ .term = 1, .index = 1, .command = "cmd1" },
-        .{ .term = 1, .index = 2, .command = "cmd2" },
+        LogEntry.command(1, 1, "cmd1"),
+        LogEntry.command(1, 2, "cmd2"),
     };
 
     const request = AppendEntriesRequest{
@@ -211,7 +211,7 @@ test "Log Replication: Leader Append-Only property" {
     leader.mutex.lock();
     const initial_count = leader.log.entries.items.len;
     const entry1_term = leader.log.get(1).?.term;
-    const entry1_cmd = try leader.allocator.dupe(u8, leader.log.get(1).?.command);
+    const entry1_cmd = try leader.allocator.dupe(u8, leader.log.get(1).?.data.command);
     defer leader.allocator.free(entry1_cmd);
     leader.mutex.unlock();
 
@@ -221,7 +221,7 @@ test "Log Replication: Leader Append-Only property" {
     try std.testing.expectEqual(initial_count + 1, leader.log.entries.items.len);
 
     try std.testing.expectEqual(entry1_term, leader.log.get(1).?.term);
-    try std.testing.expectEqualStrings(entry1_cmd, leader.log.get(1).?.command);
+    try std.testing.expectEqualStrings(entry1_cmd, leader.log.get(1).?.data.command);
     leader.mutex.unlock();
 }
 
@@ -237,10 +237,10 @@ test "Log Replication: Follower accepts batched entries" {
     try leader.becomeLeader();
 
     const entries = [_]LogEntry{
-        .{ .term = 1, .index = 1, .command = "cmd1" },
-        .{ .term = 1, .index = 2, .command = "cmd2" },
-        .{ .term = 1, .index = 3, .command = "cmd3" },
-        .{ .term = 1, .index = 4, .command = "cmd4" },
+        LogEntry.command(1, 1, "cmd1"),
+        LogEntry.command(1, 2, "cmd2"),
+        LogEntry.command(1, 3, "cmd3"),
+        LogEntry.command(1, 4, "cmd4"),
     };
 
     const request = AppendEntriesRequest{
@@ -310,7 +310,7 @@ test "Log Replication: Invalid AppendEntries are rejected" {
     try std.testing.expect(!resp.success);
 
     const bad_entries = [_]LogEntry{
-        .{ .term = 0, .index = 1, .command = "cmd" },
+        LogEntry.command(0, 1, "cmd"),
     };
 
     const invalid_entry_term = AppendEntriesRequest{
@@ -326,7 +326,7 @@ test "Log Replication: Invalid AppendEntries are rejected" {
     try std.testing.expect(!resp.success);
 
     const bad_command_entries = [_]LogEntry{
-        .{ .term = 1, .index = 1, .command = "" },
+        LogEntry.command(1, 1, ""),
     };
 
     const invalid_command = AppendEntriesRequest{

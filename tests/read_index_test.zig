@@ -16,7 +16,7 @@ test "ReadIndex: leader can request read index" {
     defer kv.deinit();
 
     const servers = [_]ServerId{ 1, 2, 3 };
-    const cluster = ClusterConfig{ .servers = &servers };
+    const cluster = ClusterConfig.single(&servers);
 
     var node = try Node.init(
         allocator,
@@ -42,7 +42,7 @@ test "ReadIndex: pending reads confirmed by heartbeat acks" {
     defer kv.deinit();
 
     const servers = [_]ServerId{ 1, 2, 3 };
-    const cluster = ClusterConfig{ .servers = &servers };
+    const cluster = ClusterConfig.single(&servers);
 
     var node = try Node.init(
         allocator,
@@ -76,7 +76,7 @@ test "ReadIndex: timeout cleanup for stale reads" {
     defer kv.deinit();
 
     const servers = [_]ServerId{ 1, 2, 3 };
-    const cluster = ClusterConfig{ .servers = &servers };
+    const cluster = ClusterConfig.single(&servers);
 
     var node = try Node.init(
         allocator,
@@ -120,7 +120,7 @@ test "ReadIndex: follower caches read index from heartbeats" {
     defer kv.deinit();
 
     const servers = [_]ServerId{ 1, 2, 3 };
-    const cluster = ClusterConfig{ .servers = &servers };
+    const cluster = ClusterConfig.single(&servers);
 
     var follower = try Node.init(
         allocator,
@@ -140,7 +140,7 @@ test "ReadIndex: follower caches read index from heartbeats" {
         .prev_log_term = 0,
         .entries = &[_]raftz.LogEntry{},
         .leader_commit = 5,
-    };
+   };
 
     _ = try follower.handleAppendEntries(request);
 
@@ -156,7 +156,7 @@ test "ReadIndex: follower cache expires" {
     defer kv.deinit();
 
     const servers = [_]ServerId{ 1, 2, 3 };
-    const cluster = ClusterConfig{ .servers = &servers };
+    const cluster = ClusterConfig.single(&servers);
 
     var follower = try Node.init(
         allocator,
@@ -177,7 +177,7 @@ test "ReadIndex: follower cache expires" {
         .prev_log_term = 0,
         .entries = &[_]raftz.LogEntry{},
         .leader_commit = 5,
-    };
+   };
 
     _ = try follower.handleAppendEntries(request);
 
@@ -195,7 +195,7 @@ test "ReadIndex: multiple pending reads tracked correctly" {
     defer kv.deinit();
 
     const servers = [_]ServerId{ 1, 2, 3 };
-    const cluster = ClusterConfig{ .servers = &servers };
+    const cluster = ClusterConfig.single(&servers);
 
     var node = try Node.init(
         allocator,
@@ -242,7 +242,7 @@ test "ReadIndex: leader doesn't use cache" {
     defer kv.deinit();
 
     const servers = [_]ServerId{ 1, 2, 3 };
-    const cluster = ClusterConfig{ .servers = &servers };
+    const cluster = ClusterConfig.single(&servers);
 
     var node = try Node.init(
         allocator,

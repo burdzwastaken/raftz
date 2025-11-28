@@ -7,16 +7,73 @@ const types = @import("types.zig");
 
 const Term = types.Term;
 const LogIndex = types.LogIndex;
+const ServerId = types.ServerId;
+const ClusterConfig = types.ClusterConfig;
 const Allocator = std.mem.Allocator;
+
+/// Type of log entry
+pub const EntryType = enum(u8) {
+    command = 0,
+    configuration = 1,
+};
+
+/// Configuration data stored in a configuration entry
+pub const ConfigurationData = struct {
+    old_servers: []ServerId,
+    new_servers: ?[]ServerId,
+
+    pub fn deinit(self: *ConfigurationData, allocator: Allocator) void {
+        allocator.free(self.old_servers);
+        if (self.new_servers) |new| {
+            allocator.free(new);
+        }
+    }
+
+    pub fn toClusterConfig(self: ConfigurationData) ClusterConfig {
+        if (self.new_servers) |new| {
+            return ClusterConfig.joint(self.old_servers, new);
+        }
+        return ClusterConfig.single(self.old_servers);
+    }
+};
+
+/// Data in a log entry
+pub const EntryData = union(EntryType) {
+    command: []const u8,
+    configuration: ConfigurationData,
+
+    pub fn deinit(self: *EntryData, allocator: Allocator) void {
+        switch (self.*) {
+            .command => |cmd| allocator.free(cmd),
+            .configuration => |*cfg| cfg.deinit(allocator),
+        }
+    }
+};
 
 /// Single entry in the replicated log
 pub const LogEntry = struct {
     term: Term,
     index: LogIndex,
-    command: []const u8,
+    data: EntryData,
 
     pub fn deinit(self: *LogEntry, allocator: Allocator) void {
-        allocator.free(self.command);
+        self.data.deinit(allocator);
+    }
+
+    pub fn command(term: Term, index: LogIndex, cmd: []const u8) LogEntry {
+        return .{
+            .term = term,
+            .index = index,
+            .data = .{ .command = cmd },
+        };
+    }
+
+    pub fn configuration(term: Term, index: LogIndex, config: ConfigurationData) LogEntry {
+        return .{
+            .term = term,
+            .index = index,
+            .data = .{ .configuration = config },
+        };
     }
 };
 
@@ -39,17 +96,34 @@ pub const Log = struct {
         self.entries.deinit(self.allocator);
     }
 
-    /// Append a new entry to the log
     pub fn append(self: *Log, term: Term, command: []const u8) !LogIndex {
         const index = self.lastIndex() + 1;
         const command_copy = try self.allocator.dupe(u8, command);
         errdefer self.allocator.free(command_copy);
 
-        try self.entries.append(self.allocator, .{
-            .term = term,
-            .index = index,
-            .command = command_copy,
-        });
+        try self.entries.append(self.allocator, LogEntry.command(term, index, command_copy));
+
+        return index;
+    }
+
+    pub fn appendConfig(self: *Log, term: Term, config: ClusterConfig) !LogIndex {
+        const index = self.lastIndex() + 1;
+
+        const old_servers_copy = try self.allocator.dupe(ServerId, config.servers);
+        errdefer self.allocator.free(old_servers_copy);
+
+        const new_servers_copy = if (config.new_servers) |new|
+            try self.allocator.dupe(ServerId, new)
+        else
+            null;
+        errdefer if (new_servers_copy) |new| self.allocator.free(new);
+
+        const config_data = ConfigurationData{
+            .old_servers = old_servers_copy,
+            .new_servers = new_servers_copy,
+        };
+
+        try self.entries.append(self.allocator, LogEntry.configuration(term, index, config_data));
 
         return index;
     }
@@ -153,7 +227,7 @@ test "Log get and truncate" {
     const entry = log.get(2);
     try std.testing.expect(entry != null);
     try std.testing.expectEqual(@as(Term, 1), entry.?.term);
-    try std.testing.expectEqualStrings("cmd2", entry.?.command);
+    try std.testing.expectEqualStrings("cmd2", entry.?.data.command);
 
     log.truncate(2);
     try std.testing.expectEqual(@as(LogIndex, 1), log.lastIndex());

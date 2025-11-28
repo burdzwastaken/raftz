@@ -94,3 +94,27 @@ pub const TimeoutNowRequest = struct {
 pub const TimeoutNowResponse = struct {
     term: Term,
 };
+
+/// Request to add a server to the cluster
+pub const AddServerRequest = struct {
+    new_server: ServerId,
+};
+
+/// Response to AddServer RPC
+pub const AddServerResponse = struct {
+    term: Term,
+    success: bool,
+    leader_id: ?ServerId,
+};
+
+/// Request to remove a server from the cluster
+pub const RemoveServerRequest = struct {
+    old_server: ServerId,
+};
+
+/// Response to RemoveServer RPC
+pub const RemoveServerResponse = struct {
+    term: Term,
+    success: bool,
+    leader_id: ?ServerId,
+};

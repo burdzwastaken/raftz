@@ -70,15 +70,95 @@ pub const Config = struct {
     }
 };
 
+/// Configuration type for cluster membership
+pub const ConfigurationType = enum {
+    /// Single configuration with one set of servers
+    single,
+    /// Joint consensus configuration with old and new sets
+    joint,
+};
+
 /// Cluster membership configuration
 pub const ClusterConfig = struct {
-    /// List of server IDs in the cluster
+    /// Type of configuration (single or joint)
+    config_type: ConfigurationType,
+    /// List of server IDs in the current/old configuration
     servers: []const ServerId,
+    /// List of server IDs in the new configuration (for joint consensus)
+    new_servers: ?[]const ServerId,
+
+    /// Create a simple single server configuration (do I like this name?)
+    pub fn single(servers: []const ServerId) ClusterConfig {
+        return .{
+            .config_type = .single,
+            .servers = servers,
+            .new_servers = null,
+        };
+    }
+
+    /// Create a joint consensus configuration
+    pub fn joint(old_servers: []const ServerId, new_servers: []const ServerId) ClusterConfig {
+        return .{
+            .config_type = .joint,
+            .servers = old_servers,
+            .new_servers = new_servers,
+        };
+    }
 
     /// Returns the number of votes needed for a majority
     /// For a cluster of N servers, majority is floor(N/2) + 1
+    /// For joint consensus, requires majorities from BOTH configurations
     pub fn majoritySize(self: ClusterConfig) usize {
         return (self.servers.len / 2) + 1;
+    }
+
+    /// Returns the majority size for the new configuration (joint consensus only)
+    pub fn newMajoritySize(self: ClusterConfig) ?usize {
+        if (self.new_servers) |new| {
+            return (new.len / 2) + 1;
+        }
+        return null;
+    }
+
+    /// Check if a server is part of the configuration
+    pub fn contains(self: ClusterConfig, server_id: ServerId) bool {
+        for (self.servers) |id| {
+            if (id == server_id) return true;
+        }
+        if (self.new_servers) |new| {
+            for (new) |id| {
+                if (id == server_id) return true;
+            }
+        }
+        return false;
+    }
+
+    /// Check if we have a majority of votes in the configuration
+    /// For single config: need majority from servers
+    /// For joint config: need majorities from BOTH old and new servers
+    pub fn hasQuorum(self: ClusterConfig, votes: std.AutoHashMap(ServerId, bool)) bool {
+        const old_votes = countVotes(self.servers, votes);
+        const has_old_majority = old_votes >= self.majoritySize();
+
+        switch (self.config_type) {
+            .single => return has_old_majority,
+            .joint => {
+                if (!has_old_majority) return false;
+                const new_votes = countVotes(self.new_servers.?, votes);
+                const new_maj = self.newMajoritySize().?;
+                return new_votes >= new_maj;
+            },
+        }
+    }
+
+    fn countVotes(servers: []const ServerId, votes: std.AutoHashMap(ServerId, bool)) usize {
+        var count: usize = 0;
+        for (servers) |server_id| {
+            if (votes.get(server_id)) |granted| {
+                if (granted) count += 1;
+            }
+        }
+        return count;
     }
 };
 
@@ -121,10 +201,43 @@ test "Config.validate" {
 
 test "ClusterConfig.majoritySize" {
     const servers_3 = [_]ServerId{ 1, 2, 3 };
-    const cluster_3 = ClusterConfig{ .servers = &servers_3 };
+    const cluster_3 = ClusterConfig.single(&servers_3);
     try std.testing.expectEqual(@as(usize, 2), cluster_3.majoritySize());
 
     const servers_5 = [_]ServerId{ 1, 2, 3, 4, 5 };
-    const cluster_5 = ClusterConfig{ .servers = &servers_5 };
+    const cluster_5 = ClusterConfig.single(&servers_5);
     try std.testing.expectEqual(@as(usize, 3), cluster_5.majoritySize());
+}
+
+test "ClusterConfig.joint" {
+    const old_servers = [_]ServerId{ 1, 2, 3 };
+    const new_servers = [_]ServerId{ 1, 2, 4 };
+    const joint_config = ClusterConfig.joint(&old_servers, &new_servers);
+
+    try std.testing.expectEqual(ConfigurationType.joint, joint_config.config_type);
+    try std.testing.expectEqual(@as(usize, 2), joint_config.majoritySize());
+    try std.testing.expectEqual(@as(usize, 2), joint_config.newMajoritySize().?);
+}
+
+test "ClusterConfig.contains" {
+    const servers = [_]ServerId{ 1, 2, 3 };
+    const config = ClusterConfig.single(&servers);
+
+    try std.testing.expect(config.contains(1));
+    try std.testing.expect(config.contains(2));
+    try std.testing.expect(!config.contains(4));
+}
+
+test "ClusterConfig.hasQuorum" {
+    const servers = [_]ServerId{ 1, 2, 3 };
+    const config = ClusterConfig.single(&servers);
+
+    var votes = std.AutoHashMap(ServerId, bool).init(std.testing.allocator);
+    defer votes.deinit();
+
+    try votes.put(1, true);
+    try std.testing.expect(!config.hasQuorum(votes)); // 1 vote not enough
+
+    try votes.put(2, true);
+    try std.testing.expect(config.hasQuorum(votes)); // 2 votes is majority
 }

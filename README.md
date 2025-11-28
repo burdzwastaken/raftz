@@ -16,6 +16,7 @@ Implementation of the [Raft consensus algorithm](https://raft.github.io/raft.pdf
 - **Pre-vote Optimization** - Reduces election disruptions from partitioned nodes
 - **ReadIndex Protocol** - Linearizable reads with heartbeat confirmation and follower caching
 - **Leadership Transfer** - Graceful leader handoff for maintenance and load balancing
+- **Dynamic Membership** - Add/remove servers from a running cluster
 
 ## Quick Start
 
@@ -36,7 +37,7 @@ defer kv.deinit();
 
 // configure cluster
 const servers = [_]raft.ServerId{ 1, 2, 3 };
-const cluster = raft.ClusterConfig{ .servers = &servers };
+const cluster = raft.ClusterConfig.single(&servers);
 
 // create node with persistence
 var storage = try raft.Storage.init(allocator, "data_dir");

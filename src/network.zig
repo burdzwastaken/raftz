@@ -333,6 +333,40 @@ pub const Transport = struct {
         };
     }
 
+    pub fn sendAddServer(
+        self: *Transport,
+        target: ServerId,
+        request: rpc.AddServerRequest,
+    ) !rpc.AddServerResponse {
+        var conn = try self.connectToPeer(target);
+        defer conn.close(self.allocator);
+
+        const request_msg = protocol.Message{ .add_server_request = request };
+        const response_msg = try conn.sendRequest(self.allocator, request_msg, self.timeout_ms);
+
+        return switch (response_msg) {
+            .add_server_response => |resp| resp,
+            else => error.InvalidResponse,
+        };
+    }
+
+    pub fn sendRemoveServer(
+        self: *Transport,
+        target: ServerId,
+        request: rpc.RemoveServerRequest,
+    ) !rpc.RemoveServerResponse {
+        var conn = try self.connectToPeer(target);
+        defer conn.close(self.allocator);
+
+        const request_msg = protocol.Message{ .remove_server_request = request };
+        const response_msg = try conn.sendRequest(self.allocator, request_msg, self.timeout_ms);
+
+        return switch (response_msg) {
+            .remove_server_response => |resp| resp,
+            else => error.InvalidResponse,
+        };
+    }
+
     pub fn handleConnection(self: *Transport, node: anytype, conn: *Connection) !void {
         defer conn.close(self.allocator);
 
@@ -362,6 +396,12 @@ pub const Transport = struct {
                 },
                 .timeout_now_request => |req| .{
                     .timeout_now_response = try node.handleTimeoutNow(req),
+                },
+                .add_server_request => |req| .{
+                    .add_server_response = try node.handleAddServer(req),
+                },
+                .remove_server_request => |req| .{
+                    .remove_server_response = try node.handleRemoveServer(req),
                 },
                 else => return error.InvalidRequest,
             };
