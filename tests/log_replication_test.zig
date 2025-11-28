@@ -132,7 +132,10 @@ test "Log Replication: Follower deletes conflicting entries" {
     follower.mutex.lock();
     try std.testing.expectEqual(@as(LogIndex, 2), follower.log.lastIndex());
     const entry2 = follower.log.get(2).?;
-    try std.testing.expectEqualStrings("new_cmd2", switch (entry2.data) { .command => |cmd| cmd, .configuration => "", });
+    try std.testing.expectEqualStrings("new_cmd2", switch (entry2.data) {
+        .command => |cmd| cmd,
+        .configuration => "",
+    });
     follower.mutex.unlock();
 }
 
@@ -195,7 +198,7 @@ test "Log Replication: Heartbeat with no entries" {
     try std.testing.expect(!follower.isElectionTimeout());
 }
 
-test "Log Replication: Leader Append-Only property" {
+test "Log Replication: Leader append only property" {
     const allocator = std.testing.allocator;
 
     var cluster = try test_utils.TestCluster.init(allocator, 1);

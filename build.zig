@@ -27,12 +27,13 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_lib_tests.step);
 
-    addIntegrationTest(b, target, optimize, raft_module, "tests/test_utils.zig", "test-utils", test_step, "Test utilities");
+    addIntegrationTest(b, target, optimize, raft_module, "tests/integration_test.zig", "test-integration", test_step, "Test integration");
     addIntegrationTest(b, target, optimize, raft_module, "tests/leader_election_test.zig", "test-election", test_step, "Test leader elections");
-    addIntegrationTest(b, target, optimize, raft_module, "tests/log_replication_test.zig", "test-replication", test_step, "Test log replication");
-    addIntegrationTest(b, target, optimize, raft_module, "tests/safety_test.zig", "test-safety", test_step, "Test safety properties");
-    addIntegrationTest(b, target, optimize, raft_module, "tests/read_index_test.zig", "test-read-index", test_step, "Test ReadIndex protocol");
     addIntegrationTest(b, target, optimize, raft_module, "tests/leadership_transfer_test.zig", "test-leadership-transfer", test_step, "Test leadership transfer");
+    addIntegrationTest(b, target, optimize, raft_module, "tests/log_replication_test.zig", "test-replication", test_step, "Test log replication");
+    addIntegrationTest(b, target, optimize, raft_module, "tests/read_index_test.zig", "test-read-index", test_step, "Test ReadIndex protocol");
+    addIntegrationTest(b, target, optimize, raft_module, "tests/safety_test.zig", "test-safety", test_step, "Test safety properties");
+    addIntegrationTest(b, target, optimize, raft_module, "tests/test_utils.zig", "test-utils", test_step, "Test utilities");
 
     const docs_module = b.createModule(.{
         .root_source_file = b.path("src/raftz.zig"),

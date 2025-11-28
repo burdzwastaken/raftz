@@ -15,7 +15,7 @@ const Storage = raftz.Storage;
 const ClusterConfig = raftz.ClusterConfig;
 const KvStore = raftz.KvStore;
 
-test "Safety: Leader Completeness - committed entry present in new leader" {
+test "Safety: Committed entry present in new leader" {
     const allocator = std.testing.allocator;
 
     var cluster = try test_utils.TestCluster.init(allocator, 3);
@@ -104,7 +104,7 @@ test "Safety: Candidate with incomplete log cannot win" {
     try std.testing.expect(!resp2.vote_granted);
 }
 
-test "Safety: State Machine Safety - no conflicting entries applied" {
+test "Safety: No conflicting entries applied" {
     const allocator = std.testing.allocator;
 
     var cluster = try test_utils.TestCluster.init(allocator, 2);
@@ -184,7 +184,7 @@ test "Safety: Committed entries from previous terms" {
     try std.testing.expectEqual(@as(LogIndex, 3), idx);
 }
 
-test "Safety: Log Matching Property" {
+test "Safety: Log matching property" {
     const allocator = std.testing.allocator;
 
     var cluster = try test_utils.TestCluster.init(allocator, 2);
@@ -216,7 +216,13 @@ test "Safety: Log Matching Property" {
             const e1 = node1.log.get(@intCast(i)).?;
             const e2 = node2.log.get(@intCast(i)).?;
             try std.testing.expectEqual(e1.term, e2.term);
-            try std.testing.expectEqualStrings(switch (e1.data) { .command => |cmd| cmd, .configuration => "", }, switch (e2.data) { .command => |cmd| cmd, .configuration => "", });
+            try std.testing.expectEqualStrings(switch (e1.data) {
+                .command => |cmd| cmd,
+                .configuration => "",
+            }, switch (e2.data) {
+                .command => |cmd| cmd,
+                .configuration => "",
+            });
         }
     }
 
@@ -287,7 +293,10 @@ test "Safety: Leader never overwrites own log" {
 
     leader.mutex.lock();
     const entry1 = leader.log.get(1).?;
-    const cmd1_copy = try leader.allocator.dupe(u8, switch (entry1.data) { .command => |cmd| cmd, .configuration => "", });
+    const cmd1_copy = try leader.allocator.dupe(u8, switch (entry1.data) {
+        .command => |cmd| cmd,
+        .configuration => "",
+    });
     defer leader.allocator.free(cmd1_copy);
     const term1 = entry1.term;
     leader.mutex.unlock();
@@ -298,7 +307,10 @@ test "Safety: Leader never overwrites own log" {
     leader.mutex.lock();
     const entry1_after = leader.log.get(1).?;
     try std.testing.expectEqual(term1, entry1_after.term);
-    try std.testing.expectEqualStrings(cmd1_copy, switch (entry1_after.data) { .command => |cmd| cmd, .configuration => "", });
+    try std.testing.expectEqualStrings(cmd1_copy, switch (entry1_after.data) {
+        .command => |cmd| cmd,
+        .configuration => "",
+    });
     leader.mutex.unlock();
 }
 

@@ -1,3 +1,5 @@
+//! ReadIndex Tests
+
 const std = @import("std");
 const raftz = @import("raftz");
 const test_utils = @import("test_utils.zig");
@@ -9,7 +11,7 @@ const AppendEntriesRequest = raftz.AppendEntriesRequest;
 const ClusterConfig = raftz.ClusterConfig;
 const KvStore = raftz.KvStore;
 
-test "ReadIndex: leader can request read index" {
+test "ReadIndex: Leader can request read index" {
     const allocator = std.testing.allocator;
 
     var kv = KvStore.init(allocator);
@@ -35,7 +37,7 @@ test "ReadIndex: leader can request read index" {
     try std.testing.expect(read_id > 0);
 }
 
-test "ReadIndex: pending reads confirmed by heartbeat acks" {
+test "ReadIndex: Pending reads confirmed by heartbeat acks" {
     const allocator = std.testing.allocator;
 
     var kv = KvStore.init(allocator);
@@ -69,7 +71,7 @@ test "ReadIndex: pending reads confirmed by heartbeat acks" {
     try std.testing.expectEqual(@as(LogIndex, 0), confirmed.?);
 }
 
-test "ReadIndex: timeout cleanup for stale reads" {
+test "ReadIndex: Timeout cleanup for stale reads" {
     const allocator = std.testing.allocator;
 
     var kv = KvStore.init(allocator);
@@ -113,7 +115,7 @@ test "ReadIndex: timeout cleanup for stale reads" {
     }
 }
 
-test "ReadIndex: follower caches read index from heartbeats" {
+test "ReadIndex: Follower caches read index from heartbeats" {
     const allocator = std.testing.allocator;
 
     var kv = KvStore.init(allocator);
@@ -140,7 +142,7 @@ test "ReadIndex: follower caches read index from heartbeats" {
         .prev_log_term = 0,
         .entries = &[_]raftz.LogEntry{},
         .leader_commit = 5,
-   };
+    };
 
     _ = try follower.handleAppendEntries(request);
 
@@ -149,7 +151,7 @@ test "ReadIndex: follower caches read index from heartbeats" {
     try std.testing.expectEqual(@as(LogIndex, 5), cached.?);
 }
 
-test "ReadIndex: follower cache expires" {
+test "ReadIndex: Follower cache expires" {
     const allocator = std.testing.allocator;
 
     var kv = KvStore.init(allocator);
@@ -177,7 +179,7 @@ test "ReadIndex: follower cache expires" {
         .prev_log_term = 0,
         .entries = &[_]raftz.LogEntry{},
         .leader_commit = 5,
-   };
+    };
 
     _ = try follower.handleAppendEntries(request);
 
@@ -188,7 +190,7 @@ test "ReadIndex: follower cache expires" {
     try std.testing.expect(follower.getCachedReadIndex() == null);
 }
 
-test "ReadIndex: multiple pending reads tracked correctly" {
+test "ReadIndex: Multiple pending reads tracked correctly" {
     const allocator = std.testing.allocator;
 
     var kv = KvStore.init(allocator);
@@ -235,7 +237,7 @@ test "ReadIndex: multiple pending reads tracked correctly" {
     }
 }
 
-test "ReadIndex: leader doesn't use cache" {
+test "ReadIndex: Leader doesn't use cache" {
     const allocator = std.testing.allocator;
 
     var kv = KvStore.init(allocator);

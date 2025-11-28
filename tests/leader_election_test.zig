@@ -47,7 +47,7 @@ test "Leader Election: Basic election succeeds" {
     try std.testing.expectEqual(Role.leader, node1.getRole());
 }
 
-test "Leader Election: Election Safety - at most one leader per term" {
+test "Leader Election: Singleton leader per term" {
     const allocator = std.testing.allocator;
 
     var cluster = try test_utils.TestCluster.init(allocator, 5);
@@ -213,7 +213,7 @@ test "Leader Election: Leader doesn't timeout" {
     try std.testing.expectEqual(Role.leader, node1.getRole());
 }
 
-test "Leader Election: Pre-vote prevents disruption" {
+test "Leader Election: PreVote prevents disruption" {
     const allocator = std.testing.allocator;
 
     var cluster = try test_utils.TestCluster.init(allocator, 3);
