@@ -13,7 +13,7 @@ pub fn main() !void {
     common.cleanupDataDirs(&data_dirs);
 
     const servers = [_]raft.ServerId{ 1, 2, 3 };
-    const cluster = raft.ClusterConfig.single(&servers);
+    const cluster = raft.ClusterConfig.simple(&servers);
 
     var storage1 = try raft.Storage.init(allocator, "raft_data_1");
     defer storage1.deinit();

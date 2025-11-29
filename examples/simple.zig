@@ -12,7 +12,7 @@ pub fn main() !void {
     defer kv.deinit();
 
     const servers = [_]raft.ServerId{ 1, 2, 3 };
-    const cluster = raft.ClusterConfig.single(&servers);
+    const cluster = raft.ClusterConfig.simple(&servers);
 
     var node = try raft.Node.init(
         allocator,

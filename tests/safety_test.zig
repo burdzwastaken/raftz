@@ -325,7 +325,7 @@ test "Safety: Applied entries persist across restarts" {
     defer storage.deinit();
 
     const servers = [_]ServerId{ 1, 2, 3 };
-    const cluster = ClusterConfig.single(&servers);
+    const cluster = ClusterConfig.simple(&servers);
 
     var kv = KvStore.init(allocator);
     defer kv.deinit();

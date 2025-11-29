@@ -18,7 +18,7 @@ test "ReadIndex: Leader can request read index" {
     defer kv.deinit();
 
     const servers = [_]ServerId{ 1, 2, 3 };
-    const cluster = ClusterConfig.single(&servers);
+    const cluster = ClusterConfig.simple(&servers);
 
     var node = try Node.init(
         allocator,
@@ -44,7 +44,7 @@ test "ReadIndex: Pending reads confirmed by heartbeat acks" {
     defer kv.deinit();
 
     const servers = [_]ServerId{ 1, 2, 3 };
-    const cluster = ClusterConfig.single(&servers);
+    const cluster = ClusterConfig.simple(&servers);
 
     var node = try Node.init(
         allocator,
@@ -78,7 +78,7 @@ test "ReadIndex: Timeout cleanup for stale reads" {
     defer kv.deinit();
 
     const servers = [_]ServerId{ 1, 2, 3 };
-    const cluster = ClusterConfig.single(&servers);
+    const cluster = ClusterConfig.simple(&servers);
 
     var node = try Node.init(
         allocator,
@@ -122,7 +122,7 @@ test "ReadIndex: Follower caches read index from heartbeats" {
     defer kv.deinit();
 
     const servers = [_]ServerId{ 1, 2, 3 };
-    const cluster = ClusterConfig.single(&servers);
+    const cluster = ClusterConfig.simple(&servers);
 
     var follower = try Node.init(
         allocator,
@@ -158,7 +158,7 @@ test "ReadIndex: Follower cache expires" {
     defer kv.deinit();
 
     const servers = [_]ServerId{ 1, 2, 3 };
-    const cluster = ClusterConfig.single(&servers);
+    const cluster = ClusterConfig.simple(&servers);
 
     var follower = try Node.init(
         allocator,
@@ -197,7 +197,7 @@ test "ReadIndex: Multiple pending reads tracked correctly" {
     defer kv.deinit();
 
     const servers = [_]ServerId{ 1, 2, 3 };
-    const cluster = ClusterConfig.single(&servers);
+    const cluster = ClusterConfig.simple(&servers);
 
     var node = try Node.init(
         allocator,
@@ -244,7 +244,7 @@ test "ReadIndex: Leader doesn't use cache" {
     defer kv.deinit();
 
     const servers = [_]ServerId{ 1, 2, 3 };
-    const cluster = ClusterConfig.single(&servers);
+    const cluster = ClusterConfig.simple(&servers);
 
     var node = try Node.init(
         allocator,

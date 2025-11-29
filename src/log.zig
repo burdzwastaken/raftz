@@ -33,7 +33,7 @@ pub const ConfigurationData = struct {
         if (self.new_servers) |new| {
             return ClusterConfig.joint(self.old_servers, new);
         }
-        return ClusterConfig.single(self.old_servers);
+        return ClusterConfig.simple(self.old_servers);
     }
 };
 

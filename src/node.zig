@@ -707,7 +707,7 @@ pub const Node = struct {
             self.cluster = new_config;
 
             if (self.role == .leader) {
-                const final_config = ClusterConfig.single(new_config.new_servers.?);
+                const final_config = ClusterConfig.simple(new_config.new_servers.?);
                 const config_index = try self.log.appendConfig(self.persistent.current_term, final_config);
 
                 if (self.storage) |storage| {
@@ -1347,7 +1347,7 @@ test "Node initialization" {
     defer kv.deinit();
 
     const servers = [_]ServerId{ 1, 2, 3 };
-    const cluster = ClusterConfig.single(&servers);
+    const cluster = ClusterConfig.simple(&servers);
 
     var node = try Node.init(
         allocator,

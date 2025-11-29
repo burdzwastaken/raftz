@@ -37,7 +37,7 @@ defer kv.deinit();
 
 // configure cluster
 const servers = [_]raft.ServerId{ 1, 2, 3 };
-const cluster = raft.ClusterConfig.single(&servers);
+const cluster = raft.ClusterConfig.simple(&servers);
 
 // create node with persistence
 var storage = try raft.Storage.init(allocator, "data_dir");
