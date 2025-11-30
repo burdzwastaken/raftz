@@ -97,22 +97,34 @@ zig build run-cluster
 ## TODO
 
 ### Zig Improvements
-- [ ] Migrate to new Zig reader/writer I/O interfacez
+- [ ] Migrate to new Zig reader/writer I/O interfaces
+- [ ] Optimize allocations and memory usage as we haven't focused on perf at all
 
-### Advanced Raft Features
-- [ ] Dynamic membership changes (addServer/removeServer RPCs)
-- [ ] Non-voting members (learners)
-- [ ] Witness members
-- [ ] Client request dedup'n (idempotent updates)
-- [ ] Request batching/pipelining
+### Raft Enhancements
+- [ ] **Client request dedups**
+  - [ ] Idempotent operations 
+  - [ ] Client session tracking (client_id, request_id)
+  - [ ] Response caching per client
+  - [ ] Session cleanup on timeout
+- [ ] **Request batching/pipelining**
+  - [ ] Batch multiple client requests into single AppendEntries RPC
+  - [ ] Pipeline multiple outstanding requests
+  - [ ] Adaptive batching based on load
+- [ ] **Enhanced membership changes**
+  - [ ] Catch-up mechanism (snapshot transfer for new servers far behind)
+  - [ ] Configuration change timeout/abort mechanism
+  - [ ] Pre-replication before adding to old,new
 
-### Enhanced Testing
-- [ ] Network partition and recovery tests
-- [ ] Snapshot and log compaction tests
-- [ ] Cluster membership change tests
-- [ ] Performance and stress tests
-- [ ] Concurrent client request handling tests
-- [ ] Byzantine fault tolerance edge cases
+### Advanced Membership Features
+- [ ] **Non-voting members (learners)**
+  - [ ] Learner server type (receives AppendEntries but doesn't vote)
+  - [ ] AddLearner/RemoveLearner RPCs
+  - [ ] PromoteLearner RPC (learner → voting member)
+  - [ ] Automatic promotion when caught up
+- [ ] **Witness members**
+  - [ ] Witness server type (votes but doesn't store log/snapshot)
+  - [ ] AddWitness/RemoveWitness RPCs
+  - [ ] Witness state sync
 
 ## Credits
 

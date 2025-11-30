@@ -233,7 +233,7 @@ pub const TestCluster = struct {
             config,
             self.cluster_config,
             kv.stateMachine(),
-            null, // no persistent storage for now...
+            null,
         );
         try self.nodes.append(self.allocator, node);
 
@@ -256,7 +256,7 @@ pub const TestCluster = struct {
             switch (node.getRole()) {
                 .leader => leaders += 1,
                 .follower => followers += 1,
-                .pre_candidate => {}, // transitional state
+                .pre_candidate => {},
                 .candidate => candidates += 1,
             }
         }

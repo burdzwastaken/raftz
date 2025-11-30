@@ -603,6 +603,7 @@ pub const Node = struct {
             insert_index = entry_index + 1;
         }
 
+        var entries_appended = false;
         for (request.entries) |entry| {
             if (entry.index >= insert_index) {
                 switch (entry.data) {
@@ -614,6 +615,13 @@ pub const Node = struct {
                         _ = try self.log.appendConfig(entry.term, config);
                     },
                 }
+                entries_appended = true;
+            }
+        }
+
+        if (entries_appended) {
+            if (self.storage) |storage| {
+                try storage.saveLog(&self.log);
             }
         }
 
@@ -698,7 +706,7 @@ pub const Node = struct {
         const new_config = config_data.toClusterConfig();
 
         if (new_config.config_type == .joint) {
-            logging.info("Node {d}: Applying old,new configuration", .{self.config.id});
+            logging.info("Node {d}: Applying joint configuration", .{self.config.id});
 
             if (self.cluster.new_servers) |old_new| {
                 self.allocator.free(old_new);
@@ -1242,7 +1250,7 @@ pub const Node = struct {
         }
 
         var new_servers = try self.allocator.alloc(ServerId, self.cluster.servers.len + 1);
-        errdefer self.allocator.free(new_servers);
+        defer self.allocator.free(new_servers);
 
         @memcpy(new_servers[0..self.cluster.servers.len], self.cluster.servers);
         new_servers[self.cluster.servers.len] = request.new_server;
@@ -1255,7 +1263,7 @@ pub const Node = struct {
             try storage.saveLog(&self.log);
         }
 
-        logging.info("Node {d}: Appended C_old,new configuration at index {d}, adding server {d}", .{
+        logging.info("Node {d}: Appended joint configuration at index {d}, adding server {d}", .{
             self.config.id,
             config_index,
             request.new_server,
@@ -1308,7 +1316,7 @@ pub const Node = struct {
         }
 
         var new_servers = try self.allocator.alloc(ServerId, self.cluster.servers.len - 1);
-        errdefer self.allocator.free(new_servers);
+        defer self.allocator.free(new_servers);
 
         var idx: usize = 0;
         for (self.cluster.servers) |server_id| {
@@ -1326,7 +1334,7 @@ pub const Node = struct {
             try storage.saveLog(&self.log);
         }
 
-        logging.info("Node {d}: Appended C_old,new configuration at index {d}, removing server {d}", .{
+        logging.info("Node {d}: Appended joint configuration at index {d}, removing server {d}", .{
             self.config.id,
             config_index,
             request.old_server,
