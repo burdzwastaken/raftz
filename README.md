@@ -23,7 +23,7 @@ Implementation of the [Raft consensus algorithm](https://raft.github.io/raft.pdf
 ### Installation
 
 ```bash
-zig fetch --save https://github.com/burdzwastaken/raftz/archive/refs/tags/v0.0.1.tar.gz
+zig fetch --save https://github.com/burdzwastaken/raftz/archive/refs/tags/v0.0.2.tar.gz
 ```
 
 ### Basic Usage
