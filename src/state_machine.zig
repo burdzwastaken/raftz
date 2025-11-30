@@ -25,9 +25,7 @@ pub const StateMachine = struct {
 
     pub const VTable = struct {
         apply: *const fn (ptr: *anyopaque, index: LogIndex, command: []const u8) Error!void,
-
         snapshot: *const fn (ptr: *anyopaque) Error![]const u8,
-
         restore: *const fn (ptr: *anyopaque, snapshot: []const u8) Error!void,
     };
 

@@ -310,7 +310,6 @@ pub const Server = struct {
         for (self.node.cluster.servers) |peer_id| {
             if (peer_id == self.node.config.id) continue;
 
-            // are we running?
             if (!self.running.load(.acquire)) return;
 
             const response = self.transport.sendRequestVote(peer_id, request) catch |err| {

@@ -1,3 +1,7 @@
+//! Protocol module for Raft consensus algorithm
+//!
+//! Defines the wire protocol for Raft messages
+
 const std = @import("std");
 const rpc = @import("rpc.zig");
 const log_mod = @import("log.zig");

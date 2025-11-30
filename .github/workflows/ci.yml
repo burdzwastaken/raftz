@@ -7,31 +7,8 @@ on:
     branches: [master]
 
 jobs:
-  build-and-test:
+  lint-build-test:
     name: Build and Test
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest]
-        zig-version: ['0.15.2']
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ matrix.zig-version }}
-
-      - name: Build
-        run: zig build
-
-      - name: Run tests
-        run: zig build test
-
-  lint:
-    name: Lint
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -50,5 +27,8 @@ jobs:
       - name: Check formatting
         run: zig fmt --check src/ examples/
 
-      - name: Build with stricter checks
+      - name: Build
         run: zig build -Doptimize=ReleaseSafe
+
+      - name: Run tests
+        run: zig build test

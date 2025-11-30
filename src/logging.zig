@@ -1,3 +1,5 @@
+//! Log helpers
+
 const std = @import("std");
 
 pub const LogLevel = enum(u8) {
