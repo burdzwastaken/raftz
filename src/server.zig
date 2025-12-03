@@ -419,7 +419,7 @@ pub const Server = struct {
             try leader_state.match_index.put(peer_id, new_match_index);
             try leader_state.next_index.put(peer_id, new_match_index + 1);
 
-            self.node.ackPendingReads();
+            self.node.ackPendingReadsLocked();
 
             try self.advanceCommitIndex();
         } else {

@@ -1020,16 +1020,20 @@ pub const Node = struct {
         };
     }
 
-    /// Record heartbeat ack which confirms pending read index requests
-    pub fn ackPendingReads(self: *Node) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
+    /// Record heartbeat ack which confirms pending read index requests (locked version)
+    pub fn ackPendingReadsLocked(self: *Node) void {
         const leader_state = &(self.leader orelse return);
 
         for (leader_state.pending_reads.items) |*read_state| {
             read_state.acks += 1;
         }
+    }
+
+    /// Record heartbeat ack which confirms pending read index requests
+    pub fn ackPendingReads(self: *Node) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.ackPendingReadsLocked();
     }
 
     /// Get confirmed read indexes that have majority ack
