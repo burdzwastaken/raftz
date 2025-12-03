@@ -46,6 +46,7 @@ pub const Storage = struct {
         var buf: [1024]u8 = undefined;
         const content = try std.fmt.bufPrint(&buf, "{d}\n{?d}\n{d}\n", .{ term, voted_for, last_applied });
         try file.writeAll(content);
+        try file.sync();
     }
 
     /// Load persisted state from disk (returns defaults if file not found)
@@ -111,6 +112,7 @@ pub const Storage = struct {
                 },
             }
         }
+        try file.sync();
     }
 
     pub fn loadLog(self: *Storage, log: *Log) !void {
@@ -148,6 +150,7 @@ pub const Storage = struct {
         }
     }
 
+    /// Save snapshot to disk
     pub fn saveSnapshot(self: *Storage, data: []const u8, last_index: LogIndex, last_term: Term) !void {
         const path = try std.fs.path.join(self.allocator, &[_][]const u8{ self.dir_path, "snapshot" });
         defer self.allocator.free(path);
@@ -166,6 +169,7 @@ pub const Storage = struct {
         try file.writeAll(&len_buf);
 
         try file.writeAll(data);
+        try file.sync();
     }
 
     pub fn loadSnapshot(self: *Storage) !?struct {
