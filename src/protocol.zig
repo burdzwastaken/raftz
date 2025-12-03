@@ -29,6 +29,12 @@ pub const MessageType = enum(u8) {
     add_server_response = 14,
     remove_server_request = 15,
     remove_server_response = 16,
+    add_learner_request = 17,
+    add_learner_response = 18,
+    remove_learner_request = 19,
+    remove_learner_response = 20,
+    promote_learner_request = 21,
+    promote_learner_response = 22,
 };
 
 /// Wire format for messages
@@ -49,6 +55,12 @@ pub const Message = union(MessageType) {
     add_server_response: rpc.AddServerResponse,
     remove_server_request: rpc.RemoveServerRequest,
     remove_server_response: rpc.RemoveServerResponse,
+    add_learner_request: rpc.AddLearnerRequest,
+    add_learner_response: rpc.AddLearnerResponse,
+    remove_learner_request: rpc.RemoveLearnerRequest,
+    remove_learner_response: rpc.RemoveLearnerResponse,
+    promote_learner_request: rpc.PromoteLearnerRequest,
+    promote_learner_response: rpc.PromoteLearnerResponse,
 };
 
 /// Serialize a message to binary format
@@ -100,6 +112,10 @@ pub fn serialize(allocator: Allocator, msg: Message) ![]const u8 {
                             for (new) |server_id| {
                                 try writer.writeInt(u64, server_id, .little);
                             }
+                        }
+                        try writer.writeInt(u64, @intCast(cfg.learners.len), .little);
+                        for (cfg.learners) |learner_id| {
+                            try writer.writeInt(u64, learner_id, .little);
                         }
                     },
                 }
@@ -161,6 +177,30 @@ pub fn serialize(allocator: Allocator, msg: Message) ![]const u8 {
             try writer.writeInt(u64, req.old_server, .little);
         },
         .remove_server_response => |resp| {
+            try writer.writeInt(u64, resp.term, .little);
+            try writer.writeByte(if (resp.success) 1 else 0);
+            try writer.writeInt(u64, resp.leader_id orelse 0, .little);
+        },
+        .add_learner_request => |req| {
+            try writer.writeInt(u64, req.learner_id, .little);
+        },
+        .add_learner_response => |resp| {
+            try writer.writeInt(u64, resp.term, .little);
+            try writer.writeByte(if (resp.success) 1 else 0);
+            try writer.writeInt(u64, resp.leader_id orelse 0, .little);
+        },
+        .remove_learner_request => |req| {
+            try writer.writeInt(u64, req.learner_id, .little);
+        },
+        .remove_learner_response => |resp| {
+            try writer.writeInt(u64, resp.term, .little);
+            try writer.writeByte(if (resp.success) 1 else 0);
+            try writer.writeInt(u64, resp.leader_id orelse 0, .little);
+        },
+        .promote_learner_request => |req| {
+            try writer.writeInt(u64, req.learner_id, .little);
+        },
+        .promote_learner_response => |resp| {
             try writer.writeInt(u64, resp.term, .little);
             try writer.writeByte(if (resp.success) 1 else 0);
             try writer.writeInt(u64, resp.leader_id orelse 0, .little);
@@ -230,9 +270,16 @@ pub fn deserialize(allocator: Allocator, data: []const u8) !Message {
                         break :blk new;
                     } else null;
 
+                    const learners_len = try reader.readInt(u64, .little);
+                    const learners = try allocator.alloc(types.ServerId, @intCast(learners_len));
+                    for (learners) |*learner_id| {
+                        learner_id.* = try reader.readInt(u64, .little);
+                    }
+
                     const config_data = log_mod.ConfigurationData{
                         .old_servers = old_servers,
                         .new_servers = new_servers,
+                        .learners = learners,
                     };
                     entry.* = log_mod.LogEntry.configuration(entry.term, entry.index, config_data);
                 }
@@ -351,6 +398,57 @@ pub fn deserialize(allocator: Allocator, data: []const u8) !Message {
             const leader_id_raw = try reader.readInt(u64, .little);
             return .{
                 .remove_server_response = .{
+                    .term = term,
+                    .success = success,
+                    .leader_id = if (leader_id_raw == 0) null else leader_id_raw,
+                },
+            };
+        },
+        .add_learner_request => .{
+            .add_learner_request = .{
+                .learner_id = try reader.readInt(u64, .little),
+            },
+        },
+        .add_learner_response => {
+            const term = try reader.readInt(u64, .little);
+            const success = (try reader.readByte()) != 0;
+            const leader_id_raw = try reader.readInt(u64, .little);
+            return .{
+                .add_learner_response = .{
+                    .term = term,
+                    .success = success,
+                    .leader_id = if (leader_id_raw == 0) null else leader_id_raw,
+                },
+            };
+        },
+        .remove_learner_request => .{
+            .remove_learner_request = .{
+                .learner_id = try reader.readInt(u64, .little),
+            },
+        },
+        .remove_learner_response => {
+            const term = try reader.readInt(u64, .little);
+            const success = (try reader.readByte()) != 0;
+            const leader_id_raw = try reader.readInt(u64, .little);
+            return .{
+                .remove_learner_response = .{
+                    .term = term,
+                    .success = success,
+                    .leader_id = if (leader_id_raw == 0) null else leader_id_raw,
+                },
+            };
+        },
+        .promote_learner_request => .{
+            .promote_learner_request = .{
+                .learner_id = try reader.readInt(u64, .little),
+            },
+        },
+        .promote_learner_response => {
+            const term = try reader.readInt(u64, .little);
+            const success = (try reader.readByte()) != 0;
+            const leader_id_raw = try reader.readInt(u64, .little);
+            return .{
+                .promote_learner_response = .{
                     .term = term,
                     .success = success,
                     .leader_id = if (leader_id_raw == 0) null else leader_id_raw,

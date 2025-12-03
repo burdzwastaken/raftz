@@ -21,19 +21,21 @@ pub const EntryType = enum(u8) {
 pub const ConfigurationData = struct {
     old_servers: []ServerId,
     new_servers: ?[]ServerId,
+    learners: []ServerId,
 
     pub fn deinit(self: *ConfigurationData, allocator: Allocator) void {
         allocator.free(self.old_servers);
         if (self.new_servers) |new| {
             allocator.free(new);
         }
+        allocator.free(self.learners);
     }
 
     pub fn toClusterConfig(self: ConfigurationData) ClusterConfig {
         if (self.new_servers) |new| {
-            return ClusterConfig.joint(self.old_servers, new);
+            return ClusterConfig.jointWithLearners(self.old_servers, new, self.learners);
         }
-        return ClusterConfig.simple(self.old_servers);
+        return ClusterConfig.withLearners(self.old_servers, self.learners);
     }
 };
 
@@ -118,9 +120,13 @@ pub const Log = struct {
             null;
         errdefer if (new_servers_copy) |new| self.allocator.free(new);
 
+        const learners_copy = try self.allocator.dupe(ServerId, config.learners);
+        errdefer self.allocator.free(learners_copy);
+
         const config_data = ConfigurationData{
             .old_servers = old_servers_copy,
             .new_servers = new_servers_copy,
+            .learners = learners_copy,
         };
 
         try self.entries.append(self.allocator, LogEntry.configuration(term, index, config_data));

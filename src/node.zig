@@ -74,6 +74,11 @@ const LeaderState = struct {
             try self.next_index.put(server_id, last_log_index + 1);
             try self.match_index.put(server_id, 0);
         }
+
+        for (cluster.learners) |learner_id| {
+            try self.next_index.put(learner_id, last_log_index + 1);
+            try self.match_index.put(learner_id, 0);
+        }
     }
 };
 
@@ -100,6 +105,7 @@ pub const Node = struct {
     transfer_target: ?ServerId,
     transfer_start_time: i64,
     mutex: std.Thread.Mutex,
+    owned_learners: ?[]ServerId,
 
     /// Initialize a new Raft node
     ///
@@ -132,6 +138,7 @@ pub const Node = struct {
             .transfer_target = null,
             .transfer_start_time = 0,
             .mutex = .{},
+            .owned_learners = null,
         };
 
         if (storage) |s| {
@@ -159,6 +166,9 @@ pub const Node = struct {
         self.log.deinit();
         if (self.leader) |*leader| {
             leader.deinit(self.allocator);
+        }
+        if (self.owned_learners) |learners| {
+            self.allocator.free(learners);
         }
     }
 
@@ -1338,6 +1348,200 @@ pub const Node = struct {
             self.config.id,
             config_index,
             request.old_server,
+        });
+
+        return .{
+            .term = self.persistent.current_term,
+            .success = true,
+            .leader_id = self.config.id,
+        };
+    }
+
+    /// Handle AddLearner RPC - add a non-voting learner to the cluster
+    pub fn handleAddLearner(self: *Node, request: rpc.AddLearnerRequest) !rpc.AddLearnerResponse {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.role != .leader) {
+            return .{
+                .term = self.persistent.current_term,
+                .success = false,
+                .leader_id = self.current_leader,
+            };
+        }
+
+        if (self.cluster.contains(request.learner_id)) {
+            logging.warn("Node {d}: Server {d} is already in the cluster", .{
+                self.config.id,
+                request.learner_id,
+            });
+            return .{
+                .term = self.persistent.current_term,
+                .success = false,
+                .leader_id = self.config.id,
+            };
+        }
+
+        var new_learners = try self.allocator.alloc(ServerId, self.cluster.learners.len + 1);
+        @memcpy(new_learners[0..self.cluster.learners.len], self.cluster.learners);
+        new_learners[self.cluster.learners.len] = request.learner_id;
+
+        if (self.owned_learners) |old| {
+            self.allocator.free(old);
+        }
+        self.owned_learners = new_learners;
+
+        self.cluster = ClusterConfig{
+            .config_type = self.cluster.config_type,
+            .servers = self.cluster.servers,
+            .new_servers = self.cluster.new_servers,
+            .learners = new_learners,
+        };
+
+        if (self.leader) |*leader| {
+            try leader.next_index.put(request.learner_id, self.log.lastIndex() + 1);
+            try leader.match_index.put(request.learner_id, 0);
+        }
+
+        logging.info("Node {d}: Added learner {d}", .{
+            self.config.id,
+            request.learner_id,
+        });
+
+        return .{
+            .term = self.persistent.current_term,
+            .success = true,
+            .leader_id = self.config.id,
+        };
+    }
+
+    /// Handle RemoveLearner RPC - remove a learner from the cluster
+    pub fn handleRemoveLearner(self: *Node, request: rpc.RemoveLearnerRequest) !rpc.RemoveLearnerResponse {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.role != .leader) {
+            return .{
+                .term = self.persistent.current_term,
+                .success = false,
+                .leader_id = self.current_leader,
+            };
+        }
+
+        if (!self.cluster.isLearner(request.learner_id)) {
+            logging.warn("Node {d}: Server {d} is not a learner", .{
+                self.config.id,
+                request.learner_id,
+            });
+            return .{
+                .term = self.persistent.current_term,
+                .success = false,
+                .leader_id = self.config.id,
+            };
+        }
+
+        var new_learners = try self.allocator.alloc(ServerId, self.cluster.learners.len - 1);
+
+        var idx: usize = 0;
+        for (self.cluster.learners) |learner_id| {
+            if (learner_id != request.learner_id) {
+                new_learners[idx] = learner_id;
+                idx += 1;
+            }
+        }
+
+        if (self.owned_learners) |old| {
+            self.allocator.free(old);
+        }
+        self.owned_learners = new_learners;
+
+        self.cluster = ClusterConfig{
+            .config_type = self.cluster.config_type,
+            .servers = self.cluster.servers,
+            .new_servers = self.cluster.new_servers,
+            .learners = new_learners,
+        };
+
+        if (self.leader) |*leader| {
+            _ = leader.next_index.remove(request.learner_id);
+            _ = leader.match_index.remove(request.learner_id);
+        }
+
+        logging.info("Node {d}: Removed learner {d}", .{
+            self.config.id,
+            request.learner_id,
+        });
+
+        return .{
+            .term = self.persistent.current_term,
+            .success = true,
+            .leader_id = self.config.id,
+        };
+    }
+
+    /// Handle PromoteLearner RPC - promote a learner to voting member
+    pub fn handlePromoteLearner(self: *Node, request: rpc.PromoteLearnerRequest) !rpc.PromoteLearnerResponse {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.role != .leader) {
+            return .{
+                .term = self.persistent.current_term,
+                .success = false,
+                .leader_id = self.current_leader,
+            };
+        }
+
+        if (!self.cluster.isLearner(request.learner_id)) {
+            logging.warn("Node {d}: Server {d} is not a learner", .{
+                self.config.id,
+                request.learner_id,
+            });
+            return .{
+                .term = self.persistent.current_term,
+                .success = false,
+                .leader_id = self.config.id,
+            };
+        }
+
+        if (self.cluster.config_type == .joint) {
+            logging.warn("Node {d}: Configuration change already in progress", .{self.config.id});
+            return .{
+                .term = self.persistent.current_term,
+                .success = false,
+                .leader_id = self.config.id,
+            };
+        }
+
+        var new_servers = try self.allocator.alloc(ServerId, self.cluster.servers.len + 1);
+        defer self.allocator.free(new_servers);
+
+        @memcpy(new_servers[0..self.cluster.servers.len], self.cluster.servers);
+        new_servers[self.cluster.servers.len] = request.learner_id;
+
+        var new_learners = try self.allocator.alloc(ServerId, self.cluster.learners.len - 1);
+        defer self.allocator.free(new_learners);
+
+        var idx: usize = 0;
+        for (self.cluster.learners) |learner_id| {
+            if (learner_id != request.learner_id) {
+                new_learners[idx] = learner_id;
+                idx += 1;
+            }
+        }
+
+        const joint_config = ClusterConfig.jointWithLearners(self.cluster.servers, new_servers, new_learners);
+
+        const config_index = try self.log.appendConfig(self.persistent.current_term, joint_config);
+
+        if (self.storage) |storage| {
+            try storage.saveLog(&self.log);
+        }
+
+        logging.info("Node {d}: Appended joint configuration at index {d}, promoting learner {d}", .{
+            self.config.id,
+            config_index,
+            request.learner_id,
         });
 
         return .{

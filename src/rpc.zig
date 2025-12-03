@@ -118,3 +118,39 @@ pub const RemoveServerResponse = struct {
     success: bool,
     leader_id: ?ServerId,
 };
+
+/// Request to add a learner (non-voting member) to the cluster
+pub const AddLearnerRequest = struct {
+    learner_id: ServerId,
+};
+
+/// Response to AddLearner RPC
+pub const AddLearnerResponse = struct {
+    term: Term,
+    success: bool,
+    leader_id: ?ServerId,
+};
+
+/// Request to remove a learner from the cluster
+pub const RemoveLearnerRequest = struct {
+    learner_id: ServerId,
+};
+
+/// Response to RemoveLearner RPC
+pub const RemoveLearnerResponse = struct {
+    term: Term,
+    success: bool,
+    leader_id: ?ServerId,
+};
+
+/// Request to promote a learner to a voting member
+pub const PromoteLearnerRequest = struct {
+    learner_id: ServerId,
+};
+
+/// Response to PromoteLearner RPC
+pub const PromoteLearnerResponse = struct {
+    term: Term,
+    success: bool,
+    leader_id: ?ServerId,
+};

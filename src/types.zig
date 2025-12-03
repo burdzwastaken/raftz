@@ -82,10 +82,12 @@ pub const ConfigurationType = enum {
 pub const ClusterConfig = struct {
     /// Type of configuration (simple or joint)
     config_type: ConfigurationType,
-    /// List of server IDs in the current/old configuration
+    /// List of voting server IDs in the current/old configuration
     servers: []const ServerId,
     /// List of server IDs in the new configuration (for joint consensus)
     new_servers: ?[]const ServerId,
+    /// List of non-voting learner server IDs (receive logs but don't vote)
+    learners: []const ServerId,
 
     /// Create a simple configuration with one set of servers
     pub fn simple(servers: []const ServerId) ClusterConfig {
@@ -93,6 +95,17 @@ pub const ClusterConfig = struct {
             .config_type = .simple,
             .servers = servers,
             .new_servers = null,
+            .learners = &.{},
+        };
+    }
+
+    /// Create a simple configuration with voting servers and learners
+    pub fn withLearners(servers: []const ServerId, learners: []const ServerId) ClusterConfig {
+        return .{
+            .config_type = .simple,
+            .servers = servers,
+            .new_servers = null,
+            .learners = learners,
         };
     }
 
@@ -102,6 +115,17 @@ pub const ClusterConfig = struct {
             .config_type = .joint,
             .servers = old_servers,
             .new_servers = new_servers,
+            .learners = &.{},
+        };
+    }
+
+    /// Create a joint consensus configuration with learners
+    pub fn jointWithLearners(old_servers: []const ServerId, new_servers: []const ServerId, learners: []const ServerId) ClusterConfig {
+        return .{
+            .config_type = .joint,
+            .servers = old_servers,
+            .new_servers = new_servers,
+            .learners = learners,
         };
     }
 
@@ -120,7 +144,7 @@ pub const ClusterConfig = struct {
         return null;
     }
 
-    /// Check if a server is part of the configuration
+    /// Check if a server is part of the configuration (voting or learner)
     pub fn contains(self: ClusterConfig, server_id: ServerId) bool {
         for (self.servers) |id| {
             if (id == server_id) return true;
@@ -130,7 +154,38 @@ pub const ClusterConfig = struct {
                 if (id == server_id) return true;
             }
         }
+        for (self.learners) |id| {
+            if (id == server_id) return true;
+        }
         return false;
+    }
+
+    /// Check if a server is a voting member
+    pub fn isVoter(self: ClusterConfig, server_id: ServerId) bool {
+        for (self.servers) |id| {
+            if (id == server_id) return true;
+        }
+        if (self.new_servers) |new| {
+            for (new) |id| {
+                if (id == server_id) return true;
+            }
+        }
+        return false;
+    }
+
+    /// Check if a server is a learner
+    pub fn isLearner(self: ClusterConfig, server_id: ServerId) bool {
+        for (self.learners) |id| {
+            if (id == server_id) return true;
+        }
+        return false;
+    }
+
+    /// Get all servers that should receive log replication (voters + learners)
+    pub fn allServers(self: ClusterConfig) []const ServerId {
+        // tbh the caller should iterate over servers/new_servers/learners
+        // separately...for convenience I thought I would provide this method
+        return self.servers;
     }
 
     /// Check if we have a majority of votes in the configuration

@@ -17,6 +17,7 @@ Implementation of the [Raft consensus algorithm](https://raft.github.io/raft.pdf
 - **ReadIndex Protocol** - Linearizable reads with heartbeat confirmation and follower caching
 - **Leadership Transfer** - Graceful leader handoff for maintenance and load balancing
 - **Dynamic Membership** - Add/remove servers from a running cluster
+- **Non-voting Members (Learners)** - Add learners that replicate logs but don't vote
 
 ## Quick Start
 
@@ -117,9 +118,6 @@ zig build run-cluster
 
 ### Advanced Membership Features
 - [ ] **Non-voting members (learners)**
-  - [ ] Learner server type (receives AppendEntries but doesn't vote)
-  - [ ] AddLearner/RemoveLearner RPCs
-  - [ ] PromoteLearner RPC (learner → voting member)
   - [ ] Automatic promotion when caught up
 - [ ] **Witness members**
   - [ ] Witness server type (votes but doesn't store log/snapshot)

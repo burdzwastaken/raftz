@@ -367,6 +367,57 @@ pub const Transport = struct {
         };
     }
 
+    pub fn sendAddLearner(
+        self: *Transport,
+        target: ServerId,
+        request: rpc.AddLearnerRequest,
+    ) !rpc.AddLearnerResponse {
+        var conn = try self.connectToPeer(target);
+        defer conn.close(self.allocator);
+
+        const request_msg = protocol.Message{ .add_learner_request = request };
+        const response_msg = try conn.sendRequest(self.allocator, request_msg, self.timeout_ms);
+
+        return switch (response_msg) {
+            .add_learner_response => |resp| resp,
+            else => error.InvalidResponse,
+        };
+    }
+
+    pub fn sendRemoveLearner(
+        self: *Transport,
+        target: ServerId,
+        request: rpc.RemoveLearnerRequest,
+    ) !rpc.RemoveLearnerResponse {
+        var conn = try self.connectToPeer(target);
+        defer conn.close(self.allocator);
+
+        const request_msg = protocol.Message{ .remove_learner_request = request };
+        const response_msg = try conn.sendRequest(self.allocator, request_msg, self.timeout_ms);
+
+        return switch (response_msg) {
+            .remove_learner_response => |resp| resp,
+            else => error.InvalidResponse,
+        };
+    }
+
+    pub fn sendPromoteLearner(
+        self: *Transport,
+        target: ServerId,
+        request: rpc.PromoteLearnerRequest,
+    ) !rpc.PromoteLearnerResponse {
+        var conn = try self.connectToPeer(target);
+        defer conn.close(self.allocator);
+
+        const request_msg = protocol.Message{ .promote_learner_request = request };
+        const response_msg = try conn.sendRequest(self.allocator, request_msg, self.timeout_ms);
+
+        return switch (response_msg) {
+            .promote_learner_response => |resp| resp,
+            else => error.InvalidResponse,
+        };
+    }
+
     pub fn handleConnection(self: *Transport, node: anytype, conn: *Connection) !void {
         defer conn.close(self.allocator);
 
@@ -402,6 +453,15 @@ pub const Transport = struct {
                 },
                 .remove_server_request => |req| .{
                     .remove_server_response = try node.handleRemoveServer(req),
+                },
+                .add_learner_request => |req| .{
+                    .add_learner_response = try node.handleAddLearner(req),
+                },
+                .remove_learner_request => |req| .{
+                    .remove_learner_response = try node.handleRemoveLearner(req),
+                },
+                .promote_learner_request => |req| .{
+                    .promote_learner_response = try node.handlePromoteLearner(req),
                 },
                 else => return error.InvalidRequest,
             };
