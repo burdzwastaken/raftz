@@ -9,11 +9,13 @@ const node_mod = @import("node.zig");
 const network_mod = @import("network.zig");
 const rpc = @import("rpc.zig");
 const logging = @import("logging.zig");
+const log_mod = @import("log.zig");
 
 const Allocator = std.mem.Allocator;
 const Node = node_mod.Node;
 const Transport = network_mod.Transport;
 const ServerId = types.ServerId;
+const Log = log_mod.Log;
 
 /// Server handles:
 /// - Listening for incoming RPC connections
@@ -371,7 +373,12 @@ pub const Server = struct {
     }
 
     fn replicateToPeer(self: *Server, peer_id: ServerId) !void {
-        const request = blk: {
+        const RequestData = struct {
+            request: rpc.AppendEntriesRequest,
+            cloned_entries: []log_mod.LogEntry,
+        };
+
+        const request_data: RequestData = blk: {
             self.node.mutex.lock();
             defer self.node.mutex.unlock();
 
@@ -381,19 +388,25 @@ pub const Server = struct {
             const prev_log_index = if (next_index > 0) next_index - 1 else 0;
             const prev_log_term = self.node.log.termAt(prev_log_index);
 
-            const entries = self.node.log.entriesFrom(next_index);
+            // clone to avoid race conditions with log modifications I hit :<
+            const cloned_entries = try self.node.log.cloneEntriesFrom(self.allocator, next_index);
 
-            break :blk rpc.AppendEntriesRequest{
-                .term = self.node.persistent.current_term,
-                .leader_id = self.node.config.id,
-                .prev_log_index = prev_log_index,
-                .prev_log_term = prev_log_term,
-                .entries = entries,
-                .leader_commit = self.node.volatile_state.commit_index,
+            break :blk .{
+                .request = rpc.AppendEntriesRequest{
+                    .term = self.node.persistent.current_term,
+                    .leader_id = self.node.config.id,
+                    .prev_log_index = prev_log_index,
+                    .prev_log_term = prev_log_term,
+                    .entries = cloned_entries,
+                    .leader_commit = self.node.volatile_state.commit_index,
+                },
+                .cloned_entries = cloned_entries,
             };
         };
 
-        const response = self.transport.sendAppendEntries(peer_id, request) catch |err| {
+        defer Log.freeClonedEntries(self.allocator, request_data.cloned_entries);
+
+        const response = self.transport.sendAppendEntries(peer_id, request_data.request) catch |err| {
             logging.debug("Node {d}: Failed to send AppendEntries to {d}: {any}", .{
                 self.node.config.id,
                 peer_id,

@@ -50,6 +50,33 @@ pub const EntryData = union(EntryType) {
             .configuration => |*cfg| cfg.deinit(allocator),
         }
     }
+
+    pub fn clone(self: EntryData, allocator: Allocator) !EntryData {
+        switch (self) {
+            .command => |cmd| {
+                const cmd_copy = try allocator.dupe(u8, cmd);
+                return .{ .command = cmd_copy };
+            },
+            .configuration => |cfg| {
+                const old_servers_copy = try allocator.dupe(ServerId, cfg.old_servers);
+                errdefer allocator.free(old_servers_copy);
+
+                const new_servers_copy = if (cfg.new_servers) |new|
+                    try allocator.dupe(ServerId, new)
+                else
+                    null;
+                errdefer if (new_servers_copy) |new| allocator.free(new);
+
+                const learners_copy = try allocator.dupe(ServerId, cfg.learners);
+
+                return .{ .configuration = .{
+                    .old_servers = old_servers_copy,
+                    .new_servers = new_servers_copy,
+                    .learners = learners_copy,
+                } };
+            },
+        }
+    }
 };
 
 /// Single entry in the replicated log
@@ -75,6 +102,14 @@ pub const LogEntry = struct {
             .term = term,
             .index = index,
             .data = .{ .configuration = config },
+        };
+    }
+
+    pub fn clone(self: LogEntry, allocator: Allocator) !LogEntry {
+        return .{
+            .term = self.term,
+            .index = self.index,
+            .data = try self.data.clone(allocator),
         };
     }
 };
@@ -185,6 +220,38 @@ pub const Log = struct {
         return self.entries.items[index - 1 ..];
     }
 
+    /// Clone entries from a given index (caller owns the returned slice)
+    pub fn cloneEntriesFrom(self: *Log, allocator: Allocator, index: LogIndex) ![]LogEntry {
+        const entries = self.entriesFrom(index);
+        if (entries.len == 0) {
+            return &.{};
+        }
+
+        const cloned = try allocator.alloc(LogEntry, entries.len);
+        errdefer allocator.free(cloned);
+
+        var i: usize = 0;
+        errdefer {
+            for (cloned[0..i]) |*entry| {
+                entry.deinit(allocator);
+            }
+        }
+
+        for (entries) |entry| {
+            cloned[i] = try entry.clone(allocator);
+            i += 1;
+        }
+
+        return cloned;
+    }
+
+    pub fn freeClonedEntries(allocator: Allocator, entries: []LogEntry) void {
+        for (entries) |*entry| {
+            entry.deinit(allocator);
+        }
+        allocator.free(entries);
+    }
+
     pub fn trimBefore(self: *Log, before_index: LogIndex) void {
         if (before_index == 0 or before_index > self.lastIndex()) {
             return;
@@ -238,4 +305,94 @@ test "Log get and truncate" {
     log.truncate(2);
     try std.testing.expectEqual(@as(LogIndex, 1), log.lastIndex());
     try std.testing.expectEqual(@as(Term, 1), log.lastTerm());
+}
+
+test "EntryData.clone command" {
+    const allocator = std.testing.allocator;
+
+    const original = EntryData{ .command = "test command" };
+    var cloned = try original.clone(allocator);
+    defer cloned.deinit(allocator);
+
+    try std.testing.expectEqualStrings("test command", cloned.command);
+    try std.testing.expect(original.command.ptr != cloned.command.ptr);
+}
+
+test "EntryData.clone configuration" {
+    const allocator = std.testing.allocator;
+
+    const old_servers = [_]ServerId{ 1, 2, 3 };
+    const new_servers = [_]ServerId{ 1, 2, 4 };
+    const learners = [_]ServerId{5};
+
+    var original_cfg = ConfigurationData{
+        .old_servers = try allocator.dupe(ServerId, &old_servers),
+        .new_servers = try allocator.dupe(ServerId, &new_servers),
+        .learners = try allocator.dupe(ServerId, &learners),
+    };
+    defer original_cfg.deinit(allocator);
+
+    var original = EntryData{ .configuration = original_cfg };
+    var cloned = try original.clone(allocator);
+    defer cloned.deinit(allocator);
+
+    try std.testing.expectEqualSlices(ServerId, &old_servers, cloned.configuration.old_servers);
+    try std.testing.expectEqualSlices(ServerId, &new_servers, cloned.configuration.new_servers.?);
+    try std.testing.expectEqualSlices(ServerId, &learners, cloned.configuration.learners);
+    try std.testing.expect(original.configuration.old_servers.ptr != cloned.configuration.old_servers.ptr);
+}
+
+test "LogEntry.clone" {
+    const allocator = std.testing.allocator;
+
+    const original = LogEntry{
+        .term = 5,
+        .index = 10,
+        .data = .{ .command = "test" },
+    };
+
+    var cloned = try original.clone(allocator);
+    defer cloned.deinit(allocator);
+
+    try std.testing.expectEqual(@as(Term, 5), cloned.term);
+    try std.testing.expectEqual(@as(LogIndex, 10), cloned.index);
+    try std.testing.expectEqualStrings("test", cloned.data.command);
+    try std.testing.expect(original.data.command.ptr != cloned.data.command.ptr);
+}
+
+test "Log.cloneEntriesFrom" {
+    const allocator = std.testing.allocator;
+    var log = Log.init(allocator);
+    defer log.deinit();
+
+    _ = try log.append(1, "cmd1");
+    _ = try log.append(1, "cmd2");
+    _ = try log.append(2, "cmd3");
+
+    const cloned = try log.cloneEntriesFrom(allocator, 2);
+    defer Log.freeClonedEntries(allocator, cloned);
+
+    try std.testing.expectEqual(@as(usize, 2), cloned.len);
+    try std.testing.expectEqualStrings("cmd2", cloned[0].data.command);
+    try std.testing.expectEqualStrings("cmd3", cloned[1].data.command);
+    try std.testing.expectEqual(@as(Term, 1), cloned[0].term);
+    try std.testing.expectEqual(@as(Term, 2), cloned[1].term);
+
+    log.truncate(2);
+    try std.testing.expectEqual(@as(LogIndex, 1), log.lastIndex());
+    try std.testing.expectEqualStrings("cmd2", cloned[0].data.command);
+    try std.testing.expectEqualStrings("cmd3", cloned[1].data.command);
+}
+
+test "Log.cloneEntriesFrom empty" {
+    const allocator = std.testing.allocator;
+    var log = Log.init(allocator);
+    defer log.deinit();
+
+    const cloned = try log.cloneEntriesFrom(allocator, 1);
+    try std.testing.expectEqual(@as(usize, 0), cloned.len);
+
+    _ = try log.append(1, "cmd1");
+    const cloned2 = try log.cloneEntriesFrom(allocator, 5);
+    try std.testing.expectEqual(@as(usize, 0), cloned2.len);
 }
