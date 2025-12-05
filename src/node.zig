@@ -100,6 +100,7 @@ pub const Node = struct {
     storage: ?*Storage,
     current_leader: ?ServerId,
     last_heartbeat: i64,
+    last_election_time: i64,
     election_timeout: u64,
     transferring_leadership: bool,
     transfer_target: ?ServerId,
@@ -135,6 +136,7 @@ pub const Node = struct {
             .storage = storage,
             .current_leader = null,
             .last_heartbeat = std.time.milliTimestamp(),
+            .last_election_time = std.time.milliTimestamp(),
             .election_timeout = config.randomElectionTimeout(),
             .transferring_leadership = false,
             .transfer_target = null,
@@ -193,7 +195,7 @@ pub const Node = struct {
 
         self.role = .pre_candidate;
         self.election_timeout = self.config.randomElectionTimeout();
-        self.last_heartbeat = std.time.milliTimestamp();
+        self.last_election_time = std.time.milliTimestamp();
 
         logging.info("Node {d}: Starting pre-vote for term {d}", .{
             self.config.id,
@@ -217,7 +219,7 @@ pub const Node = struct {
         self.persistent.current_term = new_term;
         self.persistent.voted_for = new_voted_for;
         self.election_timeout = self.config.randomElectionTimeout();
-        self.last_heartbeat = std.time.milliTimestamp();
+        self.last_election_time = std.time.milliTimestamp();
 
         logging.info("Node {d}: Starting election for term {d}", .{
             self.config.id,
@@ -673,7 +675,13 @@ pub const Node = struct {
         }
 
         const now = std.time.milliTimestamp();
-        const elapsed: u64 = @intCast(now - self.last_heartbeat);
+        // candidates/pre-candidates use last_election_time to determine retry
+        // timeout & for followers use last_heartbeat to determine when to start election
+        const base_time = if (self.role == .candidate or self.role == .pre_candidate)
+            self.last_election_time
+        else
+            self.last_heartbeat;
+        const elapsed: u64 = @intCast(now - base_time);
         return elapsed >= self.election_timeout;
     }
 
