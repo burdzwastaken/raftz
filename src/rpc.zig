@@ -10,6 +10,7 @@ const Term = types.Term;
 const LogIndex = types.LogIndex;
 const ServerId = types.ServerId;
 const LogEntry = log.LogEntry;
+const ConfigurationType = types.ConfigurationType;
 
 /// Request from candidate seeking votes during election
 pub const RequestVoteRequest = struct {
@@ -51,6 +52,10 @@ pub const InstallSnapshotRequest = struct {
     offset: u64,
     data: []const u8,
     done: bool,
+    config_type: ConfigurationType,
+    servers: []const ServerId,
+    new_servers: ?[]const ServerId,
+    learners: []const ServerId,
 };
 
 /// Response to InstallSnapshot RPC

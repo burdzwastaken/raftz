@@ -11,6 +11,8 @@ const ServerId = types.ServerId;
 const LogIndex = types.LogIndex;
 const Log = log_mod.Log;
 const LogEntry = log_mod.LogEntry;
+const ClusterConfig = types.ClusterConfig;
+const ConfigurationType = types.ConfigurationType;
 const Allocator = std.mem.Allocator;
 
 /// File-based storage for persistent Raft state
@@ -98,7 +100,6 @@ pub const Storage = struct {
             std.mem.writeInt(u64, &buf, entry.index, .little);
             try file.writeAll(&buf);
 
-            // TODO: support for configuration entries?
             switch (entry.data) {
                 .command => |cmd| {
                     const cmd_len: u64 = @intCast(cmd.len);
@@ -151,7 +152,13 @@ pub const Storage = struct {
     }
 
     /// Save snapshot to disk
-    pub fn saveSnapshot(self: *Storage, data: []const u8, last_index: LogIndex, last_term: Term) !void {
+    pub fn saveSnapshot(
+        self: *Storage,
+        data: []const u8,
+        last_index: LogIndex,
+        last_term: Term,
+        cluster_config: ClusterConfig,
+    ) !void {
         const path = try std.fs.path.join(self.allocator, &[_][]const u8{ self.dir_path, "snapshot" });
         defer self.allocator.free(path);
 
@@ -163,6 +170,8 @@ pub const Storage = struct {
         std.mem.writeInt(u64, buf[8..16], last_term, .little);
         try file.writeAll(&buf);
 
+        try self.writeClusterConfig(file, cluster_config);
+
         const data_len: u64 = @intCast(data.len);
         var len_buf: [8]u8 = undefined;
         std.mem.writeInt(u64, &len_buf, data_len, .little);
@@ -172,11 +181,68 @@ pub const Storage = struct {
         try file.sync();
     }
 
-    pub fn loadSnapshot(self: *Storage) !?struct {
+    fn writeClusterConfig(self: *Storage, file: std.fs.File, config: ClusterConfig) !void {
+        _ = self;
+        var buf: [8]u8 = undefined;
+
+        const config_type_byte: u8 = if (config.config_type == .joint) 1 else 0;
+        try file.writeAll(&[_]u8{config_type_byte});
+
+        std.mem.writeInt(u64, &buf, @intCast(config.servers.len), .little);
+        try file.writeAll(&buf);
+        for (config.servers) |server_id| {
+            std.mem.writeInt(u64, &buf, server_id, .little);
+            try file.writeAll(&buf);
+        }
+
+        const new_servers_len: u64 = if (config.new_servers) |ns| @intCast(ns.len) else 0;
+        std.mem.writeInt(u64, &buf, new_servers_len, .little);
+        try file.writeAll(&buf);
+        if (config.new_servers) |ns| {
+            for (ns) |server_id| {
+                std.mem.writeInt(u64, &buf, server_id, .little);
+                try file.writeAll(&buf);
+            }
+        }
+
+        std.mem.writeInt(u64, &buf, @intCast(config.learners.len), .little);
+        try file.writeAll(&buf);
+        for (config.learners) |server_id| {
+            std.mem.writeInt(u64, &buf, server_id, .little);
+            try file.writeAll(&buf);
+        }
+    }
+
+    /// Snapshot data returned from loadSnapshot
+    pub const SnapshotData = struct {
         data: []const u8,
         last_index: LogIndex,
         last_term: Term,
-    } {
+        config_type: ConfigurationType,
+        servers: []ServerId,
+        new_servers: ?[]ServerId,
+        learners: []ServerId,
+
+        pub fn deinit(self: *SnapshotData, allocator: Allocator) void {
+            allocator.free(self.data);
+            allocator.free(self.servers);
+            if (self.new_servers) |ns| {
+                allocator.free(ns);
+            }
+            allocator.free(self.learners);
+        }
+
+        pub fn toClusterConfig(self: SnapshotData) ClusterConfig {
+            return .{
+                .config_type = self.config_type,
+                .servers = self.servers,
+                .new_servers = self.new_servers,
+                .learners = self.learners,
+            };
+        }
+    };
+
+    pub fn loadSnapshot(self: *Storage) !?SnapshotData {
         const path = try std.fs.path.join(self.allocator, &[_][]const u8{ self.dir_path, "snapshot" });
         defer self.allocator.free(path);
 
@@ -193,6 +259,13 @@ pub const Storage = struct {
         const last_index = std.mem.readInt(u64, buf[0..8], .little);
         const last_term = std.mem.readInt(u64, buf[8..16], .little);
 
+        const config = try self.readClusterConfig(file);
+        errdefer {
+            self.allocator.free(config.servers);
+            if (config.new_servers) |ns| self.allocator.free(ns);
+            self.allocator.free(config.learners);
+        }
+
         var len_buf: [8]u8 = undefined;
         _ = try file.readAll(&len_buf);
         const data_len = std.mem.readInt(u64, &len_buf, .little);
@@ -205,6 +278,61 @@ pub const Storage = struct {
             .data = data,
             .last_index = last_index,
             .last_term = last_term,
+            .config_type = config.config_type,
+            .servers = config.servers,
+            .new_servers = config.new_servers,
+            .learners = config.learners,
+        };
+    }
+
+    fn readClusterConfig(self: *Storage, file: std.fs.File) !struct {
+        config_type: ConfigurationType,
+        servers: []ServerId,
+        new_servers: ?[]ServerId,
+        learners: []ServerId,
+    } {
+        var buf: [8]u8 = undefined;
+
+        var type_buf: [1]u8 = undefined;
+        _ = try file.readAll(&type_buf);
+        const config_type: ConfigurationType = if (type_buf[0] == 1) .joint else .simple;
+
+        _ = try file.readAll(&buf);
+        const servers_len = std.mem.readInt(u64, &buf, .little);
+        const servers = try self.allocator.alloc(ServerId, @intCast(servers_len));
+        errdefer self.allocator.free(servers);
+        for (servers) |*server_id| {
+            _ = try file.readAll(&buf);
+            server_id.* = std.mem.readInt(u64, &buf, .little);
+        }
+
+        _ = try file.readAll(&buf);
+        const new_servers_len = std.mem.readInt(u64, &buf, .little);
+        const new_servers: ?[]ServerId = if (new_servers_len > 0) blk: {
+            const ns = try self.allocator.alloc(ServerId, @intCast(new_servers_len));
+            errdefer self.allocator.free(ns);
+            for (ns) |*server_id| {
+                _ = try file.readAll(&buf);
+                server_id.* = std.mem.readInt(u64, &buf, .little);
+            }
+            break :blk ns;
+        } else null;
+        errdefer if (new_servers) |ns| self.allocator.free(ns);
+
+        _ = try file.readAll(&buf);
+        const learners_len = std.mem.readInt(u64, &buf, .little);
+        const learners = try self.allocator.alloc(ServerId, @intCast(learners_len));
+        errdefer self.allocator.free(learners);
+        for (learners) |*server_id| {
+            _ = try file.readAll(&buf);
+            server_id.* = std.mem.readInt(u64, &buf, .little);
+        }
+
+        return .{
+            .config_type = config_type,
+            .servers = servers,
+            .new_servers = new_servers,
+            .learners = learners,
         };
     }
 };

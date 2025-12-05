@@ -136,6 +136,24 @@ pub fn serialize(allocator: Allocator, msg: Message) ![]const u8 {
             try writer.writeInt(u64, @intCast(req.data.len), .little);
             try writer.writeAll(req.data);
             try writer.writeByte(if (req.done) 1 else 0);
+            try writer.writeByte(if (req.config_type == .joint) 1 else 0);
+            try writer.writeInt(u64, @intCast(req.servers.len), .little);
+            for (req.servers) |server_id| {
+                try writer.writeInt(u64, server_id, .little);
+            }
+            const has_new = req.new_servers != null;
+            try writer.writeByte(if (has_new) 1 else 0);
+            if (has_new) {
+                const new = req.new_servers.?;
+                try writer.writeInt(u64, @intCast(new.len), .little);
+                for (new) |server_id| {
+                    try writer.writeInt(u64, server_id, .little);
+                }
+            }
+            try writer.writeInt(u64, @intCast(req.learners.len), .little);
+            for (req.learners) |learner_id| {
+                try writer.writeInt(u64, learner_id, .little);
+            }
         },
         .install_snapshot_response => |resp| {
             try writer.writeInt(u64, resp.term, .little);
@@ -316,6 +334,27 @@ pub fn deserialize(allocator: Allocator, data: []const u8) !Message {
             try reader.readNoEof(snapshot_data);
             const done = (try reader.readByte()) != 0;
 
+            const config_type: types.ConfigurationType = if ((try reader.readByte()) != 0) .joint else .simple;
+            const servers_len = try reader.readInt(u64, .little);
+            const servers = try allocator.alloc(types.ServerId, @intCast(servers_len));
+            for (servers) |*server_id| {
+                server_id.* = try reader.readInt(u64, .little);
+            }
+            const has_new = (try reader.readByte()) != 0;
+            const new_servers = if (has_new) blk: {
+                const new_servers_len = try reader.readInt(u64, .little);
+                const new = try allocator.alloc(types.ServerId, @intCast(new_servers_len));
+                for (new) |*server_id| {
+                    server_id.* = try reader.readInt(u64, .little);
+                }
+                break :blk new;
+            } else null;
+            const learners_len = try reader.readInt(u64, .little);
+            const learners = try allocator.alloc(types.ServerId, @intCast(learners_len));
+            for (learners) |*learner_id| {
+                learner_id.* = try reader.readInt(u64, .little);
+            }
+
             return .{
                 .install_snapshot_request = .{
                     .term = term,
@@ -325,6 +364,10 @@ pub fn deserialize(allocator: Allocator, data: []const u8) !Message {
                     .offset = offset,
                     .data = snapshot_data,
                     .done = done,
+                    .config_type = config_type,
+                    .servers = servers,
+                    .new_servers = new_servers,
+                    .learners = learners,
                 },
             };
         },
@@ -469,6 +512,11 @@ pub fn freeMessage(allocator: Allocator, msg: Message) void {
         },
         .install_snapshot_request => |req| {
             allocator.free(req.data);
+            allocator.free(req.servers);
+            if (req.new_servers) |ns| {
+                allocator.free(ns);
+            }
+            allocator.free(req.learners);
         },
         else => {},
     }

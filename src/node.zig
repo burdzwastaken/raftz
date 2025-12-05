@@ -106,6 +106,8 @@ pub const Node = struct {
     transfer_start_time: i64,
     mutex: std.Thread.Mutex,
     owned_learners: ?[]ServerId,
+    owned_servers: ?[]ServerId,
+    owned_new_servers: ?[]ServerId,
 
     /// Initialize a new Raft node
     ///
@@ -139,6 +141,8 @@ pub const Node = struct {
             .transfer_start_time = 0,
             .mutex = .{},
             .owned_learners = null,
+            .owned_servers = null,
+            .owned_new_servers = null,
         };
 
         if (storage) |s| {
@@ -169,6 +173,12 @@ pub const Node = struct {
         }
         if (self.owned_learners) |learners| {
             self.allocator.free(learners);
+        }
+        if (self.owned_servers) |servers| {
+            self.allocator.free(servers);
+        }
+        if (self.owned_new_servers) |new_servers| {
+            self.allocator.free(new_servers);
         }
     }
 
@@ -845,7 +855,7 @@ pub const Node = struct {
         const last_included_term = last_included_entry.term;
 
         if (self.storage) |storage| {
-            try storage.saveSnapshot(snapshot_data, last_included_index, last_included_term);
+            try storage.saveSnapshot(snapshot_data, last_included_index, last_included_term, self.cluster);
             logging.info("Node {d}: Created snapshot at index {d}, term {d}", .{
                 self.config.id,
                 last_included_index,
@@ -911,11 +921,19 @@ pub const Node = struct {
         self.last_heartbeat = std.time.milliTimestamp();
 
         if (request.done) {
+            const cluster_config = ClusterConfig{
+                .config_type = request.config_type,
+                .servers = request.servers,
+                .new_servers = request.new_servers,
+                .learners = request.learners,
+            };
+
             if (self.storage) |storage| {
                 try storage.saveSnapshot(
                     request.data,
                     request.last_included_index,
                     request.last_included_term,
+                    cluster_config,
                 );
             }
 
@@ -925,6 +943,37 @@ pub const Node = struct {
             if (self.volatile_state.commit_index < request.last_included_index) {
                 self.volatile_state.commit_index = request.last_included_index;
             }
+
+            if (self.owned_servers) |s| {
+                self.allocator.free(s);
+            }
+            if (self.owned_new_servers) |ns| {
+                self.allocator.free(ns);
+            }
+            if (self.owned_learners) |l| {
+                self.allocator.free(l);
+            }
+
+            const servers_copy = try self.allocator.dupe(ServerId, request.servers);
+            errdefer self.allocator.free(servers_copy);
+
+            const new_servers_copy = if (request.new_servers) |ns|
+                try self.allocator.dupe(ServerId, ns)
+            else
+                null;
+            errdefer if (new_servers_copy) |ns| self.allocator.free(ns);
+
+            const learners_copy = try self.allocator.dupe(ServerId, request.learners);
+
+            self.cluster = ClusterConfig{
+                .config_type = request.config_type,
+                .servers = servers_copy,
+                .new_servers = new_servers_copy,
+                .learners = learners_copy,
+            };
+            self.owned_servers = servers_copy;
+            self.owned_new_servers = new_servers_copy;
+            self.owned_learners = learners_copy;
 
             self.log.trimBefore(request.last_included_index);
 
@@ -949,6 +998,21 @@ pub const Node = struct {
 
             self.volatile_state.last_applied = snapshot.last_index;
             self.volatile_state.commit_index = snapshot.last_index;
+
+            if (self.owned_servers) |s| {
+                self.allocator.free(s);
+            }
+            if (self.owned_new_servers) |ns| {
+                self.allocator.free(ns);
+            }
+            if (self.owned_learners) |l| {
+                self.allocator.free(l);
+            }
+
+            self.cluster = snapshot.toClusterConfig();
+            self.owned_servers = snapshot.servers;
+            self.owned_new_servers = snapshot.new_servers;
+            self.owned_learners = snapshot.learners;
 
             logging.info("Node {d}: Loaded snapshot at index {d}, term {d}", .{
                 self.config.id,

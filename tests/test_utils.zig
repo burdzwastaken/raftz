@@ -35,6 +35,10 @@ pub const MockStorage = struct {
         data: []const u8,
         last_index: LogIndex,
         last_term: Term,
+        config_type: raftz.types.ConfigurationType,
+        servers: []ServerId,
+        new_servers: ?[]ServerId,
+        learners: []ServerId,
     } = null,
 
     pub fn init(allocator: Allocator) MockStorage {
@@ -49,6 +53,11 @@ pub const MockStorage = struct {
         self.log_entries.deinit(self.allocator);
         if (self.snapshot) |snap| {
             self.allocator.free(snap.data);
+            self.allocator.free(snap.servers);
+            if (snap.new_servers) |ns| {
+                self.allocator.free(ns);
+            }
+            self.allocator.free(snap.learners);
         }
     }
 
@@ -94,30 +103,63 @@ pub const MockStorage = struct {
         }
     }
 
-    pub fn saveSnapshot(self: *MockStorage, data: []const u8, last_index: LogIndex, last_term: Term) !void {
+    pub fn saveSnapshot(
+        self: *MockStorage,
+        data: []const u8,
+        last_index: LogIndex,
+        last_term: Term,
+        cluster_config: ClusterConfig,
+    ) !void {
         if (self.fail_save_snapshot) return error.MockStorageError;
 
         if (self.snapshot) |snap| {
             self.allocator.free(snap.data);
+            self.allocator.free(snap.servers);
+            if (snap.new_servers) |ns| {
+                self.allocator.free(ns);
+            }
+            self.allocator.free(snap.learners);
         }
 
         const data_copy = try self.allocator.dupe(u8, data);
+        const servers_copy = try self.allocator.dupe(ServerId, cluster_config.servers);
+        const new_servers_copy = if (cluster_config.new_servers) |ns|
+            try self.allocator.dupe(ServerId, ns)
+        else
+            null;
+        const learners_copy = try self.allocator.dupe(ServerId, cluster_config.learners);
+
         self.snapshot = .{
             .data = data_copy,
             .last_index = last_index,
             .last_term = last_term,
+            .config_type = cluster_config.config_type,
+            .servers = servers_copy,
+            .new_servers = new_servers_copy,
+            .learners = learners_copy,
         };
     }
 
-    pub fn loadSnapshot(self: *MockStorage) !?struct { data: []const u8, last_index: LogIndex, last_term: Term } {
+    pub fn loadSnapshot(self: *MockStorage) !?raftz.persistence.Storage.SnapshotData {
         if (self.fail_load_snapshot) return error.MockStorageError;
 
         if (self.snapshot) |snap| {
             const data_copy = try self.allocator.dupe(u8, snap.data);
+            const servers_copy = try self.allocator.dupe(ServerId, snap.servers);
+            const new_servers_copy = if (snap.new_servers) |ns|
+                try self.allocator.dupe(ServerId, ns)
+            else
+                null;
+            const learners_copy = try self.allocator.dupe(ServerId, snap.learners);
+
             return .{
                 .data = data_copy,
                 .last_index = snap.last_index,
                 .last_term = snap.last_term,
+                .config_type = snap.config_type,
+                .servers = servers_copy,
+                .new_servers = new_servers_copy,
+                .learners = learners_copy,
             };
         }
         return null;

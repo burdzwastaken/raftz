@@ -58,9 +58,9 @@ test "Snapshot: Basic snapshot creation" {
 
     try node.createSnapshot();
 
-    const snapshot = try storage.loadSnapshot();
+    var snapshot = try storage.loadSnapshot();
     try std.testing.expect(snapshot != null);
-    defer allocator.free(snapshot.?.data);
+    defer snapshot.?.deinit(allocator);
 
     try std.testing.expectEqual(@as(LogIndex, 3), snapshot.?.last_index);
 }
@@ -94,6 +94,10 @@ test "Snapshot: InstallSnapshot from leader" {
         .offset = 0,
         .data = snapshot_data,
         .done = true,
+        .config_type = .simple,
+        .servers = &[_]ServerId{ 1, 2, 3 },
+        .new_servers = null,
+        .learners = &[_]ServerId{},
     };
 
     const response = try follower.handleInstallSnapshot(install_req);
@@ -119,13 +123,17 @@ test "Snapshot: Reject stale term snapshot" {
     follower.mutex.unlock();
 
     const install_req = rpc.InstallSnapshotRequest{
-        .term = 3, // stale term
+        .term = 3,
         .leader_id = 1,
         .last_included_index = 10,
         .last_included_term = 3,
         .offset = 0,
         .data = "snapshot_data",
         .done = true,
+        .config_type = .simple,
+        .servers = &[_]ServerId{ 1, 2, 3 },
+        .new_servers = null,
+        .learners = &[_]ServerId{},
     };
 
     const response = try follower.handleInstallSnapshot(install_req);
@@ -154,6 +162,10 @@ test "Snapshot: Invalid request handling" {
         .offset = 0,
         .data = "data",
         .done = true,
+        .config_type = .simple,
+        .servers = &[_]ServerId{ 1, 2, 3 },
+        .new_servers = null,
+        .learners = &[_]ServerId{},
     };
 
     var response = try follower.handleInstallSnapshot(invalid_term_req);
@@ -167,6 +179,10 @@ test "Snapshot: Invalid request handling" {
         .offset = 0,
         .data = "data",
         .done = true,
+        .config_type = .simple,
+        .servers = &[_]ServerId{ 1, 2, 3 },
+        .new_servers = null,
+        .learners = &[_]ServerId{},
     };
 
     response = try follower.handleInstallSnapshot(invalid_leader_req);
@@ -180,6 +196,10 @@ test "Snapshot: Invalid request handling" {
         .offset = 0,
         .data = "data",
         .done = true,
+        .config_type = .simple,
+        .servers = &[_]ServerId{ 1, 2, 3 },
+        .new_servers = null,
+        .learners = &[_]ServerId{},
     };
 
     response = try follower.handleInstallSnapshot(invalid_index_req);
@@ -193,6 +213,10 @@ test "Snapshot: Invalid request handling" {
         .offset = 0,
         .data = "",
         .done = true,
+        .config_type = .simple,
+        .servers = &[_]ServerId{ 1, 2, 3 },
+        .new_servers = null,
+        .learners = &[_]ServerId{},
     };
 
     response = try follower.handleInstallSnapshot(empty_data_req);
@@ -270,6 +294,10 @@ test "Snapshot: Follower updates leadership on snapshot" {
         .offset = 0,
         .data = "snapshot_data",
         .done = true,
+        .config_type = .simple,
+        .servers = &[_]ServerId{ 1, 2, 3 },
+        .new_servers = null,
+        .learners = &[_]ServerId{},
     };
 
     _ = try follower.handleInstallSnapshot(install_req);
@@ -300,6 +328,10 @@ test "Snapshot: Resets heartbeat timer on snapshot" {
         .offset = 0,
         .data = "snapshot_data",
         .done = true,
+        .config_type = .simple,
+        .servers = &[_]ServerId{ 1, 2, 3 },
+        .new_servers = null,
+        .learners = &[_]ServerId{},
     };
 
     _ = try follower.handleInstallSnapshot(install_req);
@@ -334,6 +366,10 @@ test "Snapshot: Higher term causes step down" {
         .offset = 0,
         .data = "snapshot_data",
         .done = true,
+        .config_type = .simple,
+        .servers = &[_]ServerId{ 1, 2, 3 },
+        .new_servers = null,
+        .learners = &[_]ServerId{},
     };
 
     _ = try node.handleInstallSnapshot(install_req);
@@ -424,6 +460,10 @@ test "Snapshot: Follower with existing log handles InstallSnapshot" {
         .offset = 0,
         .data = "new_snapshot_data",
         .done = true,
+        .config_type = .simple,
+        .servers = &[_]ServerId{ 1, 2, 3 },
+        .new_servers = null,
+        .learners = &[_]ServerId{},
     };
 
     _ = try follower.handleInstallSnapshot(install_req);
@@ -450,7 +490,11 @@ test "Snapshot: Partial snapshot (done=false) handling" {
         .last_included_term = 1,
         .offset = 0,
         .data = "partial_data",
-        .done = false, // NOT done - more chunks coming
+        .done = false,
+        .config_type = .simple,
+        .servers = &[_]ServerId{ 1, 2, 3 },
+        .new_servers = null,
+        .learners = &[_]ServerId{},
     };
 
     const response = try follower.handleInstallSnapshot(partial_req);
@@ -479,6 +523,10 @@ test "Snapshot: SendInstallSnapshot through cluster" {
         .offset = 0,
         .data = "snapshot",
         .done = true,
+        .config_type = .simple,
+        .servers = &[_]ServerId{ 1, 2, 3 },
+        .new_servers = null,
+        .learners = &[_]ServerId{},
     };
 
     const resp2 = cluster.sendInstallSnapshot(1, 2, install_req);
@@ -489,4 +537,67 @@ test "Snapshot: SendInstallSnapshot through cluster" {
     node2.mutex.lock();
     try std.testing.expectEqual(@as(LogIndex, 5), node2.volatile_state.last_applied);
     node2.mutex.unlock();
+}
+
+test "Snapshot: Cluster config restored from snapshot" {
+    const allocator = std.testing.allocator;
+
+    const dir_path = "test_snapshot_config";
+    std.fs.cwd().makeDir(dir_path) catch {};
+    defer std.fs.cwd().deleteTree(dir_path) catch {};
+
+    var storage = try Storage.init(allocator, dir_path);
+    defer storage.deinit();
+
+    const initial_servers = [_]ServerId{ 1, 2, 3 };
+    const initial_cluster = ClusterConfig.simple(&initial_servers);
+
+    {
+        var kv = KvStore.init(allocator);
+        defer kv.deinit();
+
+        var node = try Node.init(
+            allocator,
+            test_utils.testConfig(1),
+            initial_cluster,
+            kv.stateMachine(),
+            &storage,
+        );
+        defer node.deinit();
+
+        try node.becomeLeader();
+
+        _ = try node.submitCommand("SET x 1");
+
+        node.mutex.lock();
+        node.volatile_state.commit_index = 1;
+        node.mutex.unlock();
+
+        try node.applyCommitted();
+        try node.createSnapshot();
+    }
+
+    {
+        var kv2 = KvStore.init(allocator);
+        defer kv2.deinit();
+
+        const different_servers = [_]ServerId{ 10, 20, 30 };
+        const different_cluster = ClusterConfig.simple(&different_servers);
+
+        var node = try Node.init(
+            allocator,
+            test_utils.testConfig(1),
+            different_cluster,
+            kv2.stateMachine(),
+            &storage,
+        );
+        defer node.deinit();
+
+        node.mutex.lock();
+        try std.testing.expectEqual(@as(usize, 3), node.cluster.servers.len);
+        try std.testing.expectEqual(@as(ServerId, 1), node.cluster.servers[0]);
+        try std.testing.expectEqual(@as(ServerId, 2), node.cluster.servers[1]);
+        try std.testing.expectEqual(@as(ServerId, 3), node.cluster.servers[2]);
+        node.mutex.unlock();
+    }
 }
