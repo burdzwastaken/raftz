@@ -219,9 +219,11 @@ test "Safety: Log matching property" {
             try std.testing.expectEqualStrings(switch (e1.data) {
                 .command => |cmd| cmd,
                 .configuration => "",
+                .client_command => |cc| cc.command,
             }, switch (e2.data) {
                 .command => |cmd| cmd,
                 .configuration => "",
+                .client_command => |cc| cc.command,
             });
         }
     }
@@ -296,6 +298,7 @@ test "Safety: Leader never overwrites own log" {
     const cmd1_copy = try leader.allocator.dupe(u8, switch (entry1.data) {
         .command => |cmd| cmd,
         .configuration => "",
+        .client_command => |cc| cc.command,
     });
     defer leader.allocator.free(cmd1_copy);
     const term1 = entry1.term;
@@ -310,6 +313,7 @@ test "Safety: Leader never overwrites own log" {
     try std.testing.expectEqualStrings(cmd1_copy, switch (entry1_after.data) {
         .command => |cmd| cmd,
         .configuration => "",
+        .client_command => |cc| cc.command,
     });
     leader.mutex.unlock();
 }

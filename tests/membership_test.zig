@@ -44,7 +44,7 @@ test "Membership: AddServer basic success" {
     const last_entry = leader.log.get(leader.log.lastIndex()).?;
     switch (last_entry.data) {
         .configuration => {},
-        .command => try std.testing.expect(false),
+        .command, .client_command => try std.testing.expect(false),
     }
     leader.mutex.unlock();
 }
@@ -148,7 +148,7 @@ test "Membership: RemoveServer basic success" {
     const last_entry = leader.log.get(leader.log.lastIndex()).?;
     switch (last_entry.data) {
         .configuration => {},
-        .command => try std.testing.expect(false),
+        .command, .client_command => try std.testing.expect(false),
     }
     leader.mutex.unlock();
 }
@@ -434,7 +434,7 @@ test "Membership: Follower replicates membership change via AppendEntries" {
     const follower_entry = follower.log.get(1).?;
     switch (follower_entry.data) {
         .configuration => {},
-        .command => try std.testing.expect(false),
+        .command, .client_command => try std.testing.expect(false),
     }
     follower.mutex.unlock();
 }
@@ -682,7 +682,7 @@ test "Membership: PromoteLearner basic success" {
         .configuration => |cfg| {
             try std.testing.expect(cfg.new_servers != null);
         },
-        .command => try std.testing.expect(false),
+        .command, .client_command => try std.testing.expect(false),
     }
     leader.mutex.unlock();
 }

@@ -8,6 +8,8 @@ const types = @import("types.zig");
 const Term = types.Term;
 const LogIndex = types.LogIndex;
 const ServerId = types.ServerId;
+const ClientId = types.ClientId;
+const SequenceNumber = types.SequenceNumber;
 const ClusterConfig = types.ClusterConfig;
 const Allocator = std.mem.Allocator;
 
@@ -15,6 +17,26 @@ const Allocator = std.mem.Allocator;
 pub const EntryType = enum(u8) {
     command = 0,
     configuration = 1,
+    client_command = 2,
+};
+
+/// Command data with client session info for request deduplication
+pub const ClientCommandData = struct {
+    client_id: ClientId,
+    sequence: SequenceNumber,
+    command: []const u8,
+
+    pub fn deinit(self: *ClientCommandData, allocator: Allocator) void {
+        allocator.free(self.command);
+    }
+
+    pub fn clone(self: ClientCommandData, allocator: Allocator) !ClientCommandData {
+        return .{
+            .client_id = self.client_id,
+            .sequence = self.sequence,
+            .command = try allocator.dupe(u8, self.command),
+        };
+    }
 };
 
 /// Configuration data stored in a configuration entry
@@ -43,11 +65,13 @@ pub const ConfigurationData = struct {
 pub const EntryData = union(EntryType) {
     command: []const u8,
     configuration: ConfigurationData,
+    client_command: ClientCommandData,
 
     pub fn deinit(self: *EntryData, allocator: Allocator) void {
         switch (self.*) {
             .command => |cmd| allocator.free(cmd),
             .configuration => |*cfg| cfg.deinit(allocator),
+            .client_command => |*cc| cc.deinit(allocator),
         }
     }
 
@@ -74,6 +98,9 @@ pub const EntryData = union(EntryType) {
                     .new_servers = new_servers_copy,
                     .learners = learners_copy,
                 } };
+            },
+            .client_command => |cc| {
+                return .{ .client_command = try cc.clone(allocator) };
             },
         }
     }
@@ -102,6 +129,18 @@ pub const LogEntry = struct {
             .term = term,
             .index = index,
             .data = .{ .configuration = config },
+        };
+    }
+
+    pub fn clientCommand(term: Term, index: LogIndex, client_id: ClientId, sequence: SequenceNumber, cmd: []const u8) LogEntry {
+        return .{
+            .term = term,
+            .index = index,
+            .data = .{ .client_command = .{
+                .client_id = client_id,
+                .sequence = sequence,
+                .command = cmd,
+            } },
         };
     }
 
@@ -139,6 +178,23 @@ pub const Log = struct {
         errdefer self.allocator.free(command_copy);
 
         try self.entries.append(self.allocator, LogEntry.command(term, index, command_copy));
+
+        return index;
+    }
+
+    /// Append a client command with session tracking info
+    pub fn appendClientCommand(
+        self: *Log,
+        term: Term,
+        client_id: ClientId,
+        sequence: SequenceNumber,
+        command: []const u8,
+    ) !LogIndex {
+        const index = self.lastIndex() + 1;
+        const command_copy = try self.allocator.dupe(u8, command);
+        errdefer self.allocator.free(command_copy);
+
+        try self.entries.append(self.allocator, LogEntry.clientCommand(term, index, client_id, sequence, command_copy));
 
         return index;
     }

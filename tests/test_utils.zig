@@ -628,6 +628,7 @@ pub const TestCluster = struct {
                 const entry_data = switch (entry.data) {
                     .command => |cmd| cmd,
                     .configuration => "",
+                    .client_command => |cc| cc.command,
                 };
 
                 if (first_entry) |first| {

@@ -135,6 +135,7 @@ test "Log Replication: Follower deletes conflicting entries" {
     try std.testing.expectEqualStrings("new_cmd2", switch (entry2.data) {
         .command => |cmd| cmd,
         .configuration => "",
+        .client_command => |cc| cc.command,
     });
     follower.mutex.unlock();
 }

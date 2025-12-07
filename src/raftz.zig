@@ -23,6 +23,8 @@ pub const rpc = @import("rpc.zig");
 pub const server = @import("server.zig");
 /// Pluggable state machine interface
 pub const state_machine = @import("state_machine.zig");
+/// Client session tracking for request deduplication
+pub const session = @import("session.zig");
 /// Common type definitions
 pub const types = @import("types.zig");
 
@@ -40,6 +42,10 @@ pub const ServerId = types.ServerId;
 pub const Term = types.Term;
 /// Index position in the replicated log
 pub const LogIndex = types.LogIndex;
+/// Unique identifier for a client session
+pub const ClientId = types.ClientId;
+/// Sequence number for client requests
+pub const SequenceNumber = types.SequenceNumber;
 /// Node role (follower, candidate, or leader)
 pub const Role = types.Role;
 /// Node configuration parameters

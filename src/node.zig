@@ -9,17 +9,22 @@ const log_mod = @import("log.zig");
 const rpc = @import("rpc.zig");
 const state_machine_mod = @import("state_machine.zig");
 const persistence_mod = @import("persistence.zig");
+const session_mod = @import("session.zig");
 const logging = @import("logging.zig");
 
 const Role = types.Role;
 const Term = types.Term;
 const LogIndex = types.LogIndex;
 const ServerId = types.ServerId;
+const ClientId = types.ClientId;
+const SequenceNumber = types.SequenceNumber;
 const Config = types.Config;
 const ClusterConfig = types.ClusterConfig;
 const Log = log_mod.Log;
 const StateMachine = state_machine_mod.StateMachine;
+const ApplyResult = state_machine_mod.ApplyResult;
 const Storage = persistence_mod.Storage;
+const SessionManager = session_mod.SessionManager;
 const Allocator = std.mem.Allocator;
 
 /// Persistent state on all servers
@@ -87,6 +92,7 @@ const LeaderState = struct {
 /// - Log replication from leader to followers
 /// - State machine application of committed entries
 /// - Persistent state management via optional Storage
+/// - Client session tracking for request deduping
 pub const Node = struct {
     allocator: Allocator,
     config: Config,
@@ -98,6 +104,7 @@ pub const Node = struct {
     log: Log,
     state_machine: StateMachine,
     storage: ?*Storage,
+    sessions: SessionManager,
     current_leader: ?ServerId,
     last_heartbeat: i64,
     last_election_time: i64,
@@ -134,6 +141,7 @@ pub const Node = struct {
             .log = Log.init(allocator),
             .state_machine = state_machine,
             .storage = storage,
+            .sessions = SessionManager.init(allocator),
             .current_leader = null,
             .last_heartbeat = std.time.milliTimestamp(),
             .last_election_time = std.time.milliTimestamp(),
@@ -170,6 +178,7 @@ pub const Node = struct {
 
     pub fn deinit(self: *Node) void {
         self.log.deinit();
+        self.sessions.deinit();
         if (self.leader) |*leader| {
             leader.deinit(self.allocator);
         }
@@ -557,6 +566,19 @@ pub const Node = struct {
                     }
                 },
                 .configuration => {},
+                .client_command => |cc| {
+                    if (cc.command.len == 0) {
+                        logging.warn("Node {d}: Empty client command in log entry at index={d}", .{
+                            self.config.id,
+                            entry.index,
+                        });
+                        return .{
+                            .term = self.persistent.current_term,
+                            .success = false,
+                            .match_index = 0,
+                        };
+                    }
+                },
             }
         }
 
@@ -636,6 +658,9 @@ pub const Node = struct {
                         const config = cfg.toClusterConfig();
                         _ = try self.log.appendConfig(entry.term, config);
                     },
+                    .client_command => |cc| {
+                        _ = try self.log.appendClientCommand(entry.term, cc.client_id, cc.sequence, cc.command);
+                    },
                 }
                 entries_appended = true;
             }
@@ -712,11 +737,17 @@ pub const Node = struct {
             if (self.log.get(self.volatile_state.last_applied)) |entry| {
                 switch (entry.data) {
                     .command => |cmd| {
-                        try self.state_machine.apply(entry.index, cmd);
+                        _ = try self.state_machine.apply(entry.index, cmd);
                         applied_any = true;
                     },
                     .configuration => |cfg| {
                         try self.applyConfigurationChange(cfg);
+                        applied_any = true;
+                    },
+                    .client_command => |cc| {
+                        const result = try self.state_machine.apply(entry.index, cc.command);
+                        // response for duplicate detection
+                        try self.sessions.recordResponse(cc.client_id, cc.sequence, result.response);
                         applied_any = true;
                     },
                 }
@@ -827,6 +858,85 @@ pub const Node = struct {
         });
 
         return index;
+    }
+
+    pub const ClientCommandResult = struct {
+        index: LogIndex,
+        cached_response: ?[]const u8,
+        is_duplicate: bool,
+    };
+
+    /// Submit a client command with deduplication support
+    pub fn submitClientCommand(
+        self: *Node,
+        client_id: ClientId,
+        sequence: SequenceNumber,
+        command: []const u8,
+    ) !ClientCommandResult {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.role != .leader) {
+            return error.NotLeader;
+        }
+
+        if (self.sessions.checkDuplicate(client_id, sequence)) |cached| {
+            logging.debug("Node {d}: Duplicate request from client {d} seq {d}, returning cached response", .{
+                self.config.id,
+                client_id,
+                sequence,
+            });
+            return .{
+                .index = 0,
+                .cached_response = cached,
+                .is_duplicate = true,
+            };
+        }
+
+        if (self.sessions.isStale(client_id, sequence)) {
+            logging.warn("Node {d}: Stale request from client {d} seq {d}", .{
+                self.config.id,
+                client_id,
+                sequence,
+            });
+            return error.StaleRequest;
+        }
+
+        const index = try self.log.appendClientCommand(
+            self.persistent.current_term,
+            client_id,
+            sequence,
+            command,
+        );
+
+        try self.sessions.registerRequest(client_id, sequence, index);
+
+        if (self.storage) |storage| {
+            try storage.saveLog(&self.log);
+        }
+
+        logging.debug("Node {d}: Accepted client command from {d} seq {d} at index {d}", .{
+            self.config.id,
+            client_id,
+            sequence,
+            index,
+        });
+
+        return .{
+            .index = index,
+            .cached_response = null,
+            .is_duplicate = false,
+        };
+    }
+
+    pub fn getClientResponse(
+        self: *Node,
+        client_id: ClientId,
+        sequence: SequenceNumber,
+    ) ?[]const u8 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.sessions.checkDuplicate(client_id, sequence);
     }
 
     pub fn getLeader(self: *Node) ?ServerId {

@@ -5,14 +5,19 @@
 const std = @import("std");
 const types = @import("types.zig");
 const log_mod = @import("log.zig");
+const session_mod = @import("session.zig");
 
 const Term = types.Term;
 const ServerId = types.ServerId;
 const LogIndex = types.LogIndex;
+const ClientId = types.ClientId;
+const SequenceNumber = types.SequenceNumber;
 const Log = log_mod.Log;
 const LogEntry = log_mod.LogEntry;
+const EntryType = log_mod.EntryType;
 const ClusterConfig = types.ClusterConfig;
 const ConfigurationType = types.ConfigurationType;
+const SessionManager = session_mod.SessionManager;
 const Allocator = std.mem.Allocator;
 
 /// File-based storage for persistent Raft state
@@ -100,6 +105,9 @@ pub const Storage = struct {
             std.mem.writeInt(u64, &buf, entry.index, .little);
             try file.writeAll(&buf);
 
+            const entry_type: u8 = @intFromEnum(std.meta.activeTag(entry.data));
+            try file.writeAll(&[_]u8{entry_type});
+
             switch (entry.data) {
                 .command => |cmd| {
                     const cmd_len: u64 = @intCast(cmd.len);
@@ -110,6 +118,16 @@ pub const Storage = struct {
                 .configuration => {
                     std.mem.writeInt(u64, &buf, 0, .little);
                     try file.writeAll(&buf);
+                },
+                .client_command => |cc| {
+                    std.mem.writeInt(u64, &buf, cc.client_id, .little);
+                    try file.writeAll(&buf);
+                    std.mem.writeInt(u64, &buf, cc.sequence, .little);
+                    try file.writeAll(&buf);
+                    const cmd_len: u64 = @intCast(cc.command.len);
+                    std.mem.writeInt(u64, &buf, cmd_len, .little);
+                    try file.writeAll(&buf);
+                    try file.writeAll(cc.command);
                 },
             }
         }
@@ -140,14 +158,39 @@ pub const Storage = struct {
             _ = try file.readAll(&buf);
             const index = std.mem.readInt(u64, &buf, .little);
 
-            _ = try file.readAll(&buf);
-            const cmd_len = std.mem.readInt(u64, &buf, .little);
+            var type_buf: [1]u8 = undefined;
+            _ = try file.readAll(&type_buf);
+            const entry_type: EntryType = @enumFromInt(type_buf[0]);
 
-            const command = try self.allocator.alloc(u8, @intCast(cmd_len));
-            errdefer self.allocator.free(command);
-            _ = try file.readAll(command);
+            switch (entry_type) {
+                .command => {
+                    _ = try file.readAll(&buf);
+                    const cmd_len = std.mem.readInt(u64, &buf, .little);
 
-            try log.entries.append(log.allocator, LogEntry.command(term, index, command));
+                    const command = try self.allocator.alloc(u8, @intCast(cmd_len));
+                    errdefer self.allocator.free(command);
+                    _ = try file.readAll(command);
+
+                    try log.entries.append(log.allocator, LogEntry.command(term, index, command));
+                },
+                .configuration => {
+                    _ = try file.readAll(&buf);
+                },
+                .client_command => {
+                    _ = try file.readAll(&buf);
+                    const client_id = std.mem.readInt(u64, &buf, .little);
+                    _ = try file.readAll(&buf);
+                    const sequence = std.mem.readInt(u64, &buf, .little);
+                    _ = try file.readAll(&buf);
+                    const cmd_len = std.mem.readInt(u64, &buf, .little);
+
+                    const command = try self.allocator.alloc(u8, @intCast(cmd_len));
+                    errdefer self.allocator.free(command);
+                    _ = try file.readAll(command);
+
+                    try log.entries.append(log.allocator, LogEntry.clientCommand(term, index, client_id, sequence, command));
+                },
+            }
         }
     }
 
@@ -283,6 +326,93 @@ pub const Storage = struct {
             .new_servers = config.new_servers,
             .learners = config.learners,
         };
+    }
+
+    /// Save session state to disk
+    pub fn saveSessions(self: *Storage, sessions: *SessionManager) !void {
+        const path = try std.fs.path.join(self.allocator, &[_][]const u8{ self.dir_path, "sessions" });
+        defer self.allocator.free(path);
+
+        const file = try std.fs.cwd().createFile(path, .{});
+        defer file.close();
+
+        var buf: [8]u8 = undefined;
+
+        const count: u64 = @intCast(sessions.count());
+        std.mem.writeInt(u64, &buf, count, .little);
+        try file.writeAll(&buf);
+
+        var it = sessions.iterator();
+        while (it.next()) |entry| {
+            const client_id = entry.key_ptr.*;
+            const session = entry.value_ptr.*;
+
+            std.mem.writeInt(u64, &buf, client_id, .little);
+            try file.writeAll(&buf);
+
+            std.mem.writeInt(u64, &buf, session.last_sequence, .little);
+            try file.writeAll(&buf);
+
+            std.mem.writeInt(u64, &buf, session.last_index, .little);
+            try file.writeAll(&buf);
+
+            if (session.last_response) |response| {
+                const resp_len: u64 = @intCast(response.len);
+                std.mem.writeInt(u64, &buf, resp_len, .little);
+                try file.writeAll(&buf);
+                try file.writeAll(response);
+            } else {
+                std.mem.writeInt(u64, &buf, 0, .little);
+                try file.writeAll(&buf);
+            }
+        }
+
+        try file.sync();
+    }
+
+    pub fn loadSessions(self: *Storage, sessions: *SessionManager) !void {
+        const path = try std.fs.path.join(self.allocator, &[_][]const u8{ self.dir_path, "sessions" });
+        defer self.allocator.free(path);
+
+        const file = std.fs.cwd().openFile(path, .{}) catch |err| {
+            if (err == error.FileNotFound) {
+                return;
+            }
+            return err;
+        };
+        defer file.close();
+
+        var buf: [8]u8 = undefined;
+
+        _ = try file.readAll(&buf);
+        const count = std.mem.readInt(u64, &buf, .little);
+
+        var i: u64 = 0;
+        while (i < count) : (i += 1) {
+            _ = try file.readAll(&buf);
+            const client_id = std.mem.readInt(u64, &buf, .little);
+
+            _ = try file.readAll(&buf);
+            const last_sequence = std.mem.readInt(u64, &buf, .little);
+
+            _ = try file.readAll(&buf);
+            const last_index = std.mem.readInt(u64, &buf, .little);
+
+            _ = try file.readAll(&buf);
+            const resp_len = std.mem.readInt(u64, &buf, .little);
+
+            const response: ?[]const u8 = if (resp_len > 0) blk: {
+                const resp = try self.allocator.alloc(u8, @intCast(resp_len));
+                _ = try file.readAll(resp);
+                break :blk resp;
+            } else null;
+
+            try sessions.restoreSession(client_id, last_sequence, last_index, response);
+
+            if (response) |resp| {
+                self.allocator.free(resp);
+            }
+        }
     }
 
     fn readClusterConfig(self: *Storage, file: std.fs.File) !struct {

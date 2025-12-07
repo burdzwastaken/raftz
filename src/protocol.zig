@@ -118,6 +118,13 @@ pub fn serialize(allocator: Allocator, msg: Message) ![]const u8 {
                             try writer.writeInt(u64, learner_id, .little);
                         }
                     },
+                    .client_command => |cc| {
+                        try writer.writeByte(2);
+                        try writer.writeInt(u64, cc.client_id, .little);
+                        try writer.writeInt(u64, cc.sequence, .little);
+                        try writer.writeInt(u64, @intCast(cc.command.len), .little);
+                        try writer.writeAll(cc.command);
+                    },
                 }
             }
             try writer.writeInt(u64, req.leader_commit, .little);
@@ -271,7 +278,7 @@ pub fn deserialize(allocator: Allocator, data: []const u8) !Message {
                     const command = try allocator.alloc(u8, @intCast(cmd_len));
                     try reader.readNoEof(command);
                     entry.* = log_mod.LogEntry.command(entry.term, entry.index, command);
-                } else {
+                } else if (entry_type_byte == 1) {
                     const old_servers_len = try reader.readInt(u64, .little);
                     const old_servers = try allocator.alloc(types.ServerId, @intCast(old_servers_len));
                     for (old_servers) |*server_id| {
@@ -300,6 +307,13 @@ pub fn deserialize(allocator: Allocator, data: []const u8) !Message {
                         .learners = learners,
                     };
                     entry.* = log_mod.LogEntry.configuration(entry.term, entry.index, config_data);
+                } else {
+                    const client_id = try reader.readInt(u64, .little);
+                    const sequence = try reader.readInt(u64, .little);
+                    const cmd_len = try reader.readInt(u64, .little);
+                    const command = try allocator.alloc(u8, @intCast(cmd_len));
+                    try reader.readNoEof(command);
+                    entry.* = log_mod.LogEntry.clientCommand(entry.term, entry.index, client_id, sequence, command);
                 }
             }
 

@@ -11,6 +11,12 @@ pub const Term = u64;
 /// Index position in the replicated log (1-based indexing)
 pub const LogIndex = u64;
 
+/// Unique identifier for a client session (used for request deduping)
+pub const ClientId = u64;
+
+/// Sequence number for client requests
+pub const SequenceNumber = u64;
+
 /// Role of a server in the Raft cluster
 pub const Role = enum {
     /// Follower: Passive server that replicates log entries from the leader

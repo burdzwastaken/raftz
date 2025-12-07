@@ -18,6 +18,7 @@ Implementation of the [Raft consensus algorithm](https://raft.github.io/raft.pdf
 - **Leadership Transfer** - Graceful leader handoff for maintenance and load balancing
 - **Dynamic Membership** - Add/remove servers from a running cluster
 - **Non-voting Members (Learners)** - Add learners that replicate logs but don't vote
+- **Client Session Tracking** - Request deduping with cached responses for idempotent operations
 
 ## Quick Start
 
@@ -102,11 +103,7 @@ zig build run-cluster
 - [ ] Optimize allocations and memory usage as we haven't focused on perf at all
 
 ### Raft Enhancements
-- [ ] **Client request dedups**
-  - [ ] Idempotent operations 
-  - [ ] Client session tracking (client_id, request_id)
-  - [ ] Response caching per client
-  - [ ] Session cleanup on timeout
+- [ ] **Client session cleanup** - Session expiry on timeout
 - [ ] **Request batching/pipelining**
   - [ ] Batch multiple client requests into single AppendEntries RPC
   - [ ] Pipeline multiple outstanding requests

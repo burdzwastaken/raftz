@@ -15,6 +15,18 @@ pub const Error = error{
     OutOfMemory,
 };
 
+pub const ApplyResult = struct {
+    response: ?[]const u8,
+
+    pub fn none() ApplyResult {
+        return .{ .response = null };
+    }
+
+    pub fn withResponse(data: []const u8) ApplyResult {
+        return .{ .response = data };
+    }
+};
+
 /// Interface for pluggable state machines
 ///
 /// Implement this interface to provide custom application logic that
@@ -24,13 +36,13 @@ pub const StateMachine = struct {
     vtable: *const VTable,
 
     pub const VTable = struct {
-        apply: *const fn (ptr: *anyopaque, index: LogIndex, command: []const u8) Error!void,
+        apply: *const fn (ptr: *anyopaque, index: LogIndex, command: []const u8) Error!ApplyResult,
         snapshot: *const fn (ptr: *anyopaque) Error![]const u8,
         restore: *const fn (ptr: *anyopaque, snapshot: []const u8) Error!void,
     };
 
     /// Apply a committed log entry to the state machine
-    pub fn apply(self: StateMachine, index: LogIndex, command: []const u8) !void {
+    pub fn apply(self: StateMachine, index: LogIndex, command: []const u8) !ApplyResult {
         return self.vtable.apply(self.ptr, index, command);
     }
 
@@ -79,7 +91,7 @@ pub const KvStore = struct {
         };
     }
 
-    fn applyImpl(ptr: *anyopaque, _: LogIndex, command: []const u8) Error!void {
+    fn applyImpl(ptr: *anyopaque, _: LogIndex, command: []const u8) Error!ApplyResult {
         const self: *KvStore = @ptrCast(@alignCast(ptr));
 
         var it = std.mem.splitScalar(u8, command, ' ');
@@ -100,13 +112,22 @@ pub const KvStore = struct {
                 errdefer self.allocator.free(key_copy);
                 try self.data.put(key_copy, value_copy);
             }
+            return ApplyResult.none();
         } else if (std.mem.eql(u8, cmd, "DEL")) {
             const key = it.next() orelse return Error.InvalidCommand;
             if (self.data.fetchRemove(key)) |removed| {
                 self.allocator.free(removed.key);
                 self.allocator.free(removed.value);
             }
+            return ApplyResult.none();
+        } else if (std.mem.eql(u8, cmd, "GET")) {
+            const key = it.next() orelse return Error.InvalidCommand;
+            if (self.data.get(key)) |value| {
+                return ApplyResult.withResponse(value);
+            }
+            return ApplyResult.none();
         }
+        return ApplyResult.none();
     }
 
     fn snapshotImpl(ptr: *anyopaque) Error![]const u8 {
@@ -158,9 +179,13 @@ test "KvStore basic operations" {
 
     const sm = kv.stateMachine();
 
-    try sm.apply(1, "SET foo bar");
-    try sm.apply(2, "SET baz qux");
+    _ = try sm.apply(1, "SET foo bar");
+    _ = try sm.apply(2, "SET baz qux");
 
     try std.testing.expect(kv.data.contains("foo"));
     try std.testing.expectEqualStrings("bar", kv.data.get("foo").?);
+
+    const result = try sm.apply(3, "GET foo");
+    try std.testing.expect(result.response != null);
+    try std.testing.expectEqualStrings("bar", result.response.?);
 }
