@@ -13,6 +13,7 @@ pub const Session = struct {
     last_sequence: SequenceNumber,
     last_response: ?[]const u8,
     last_index: LogIndex,
+    last_activity_ms: i64,
 
     pub fn deinit(self: *Session, allocator: Allocator) void {
         if (self.last_response) |response| {
@@ -21,15 +22,23 @@ pub const Session = struct {
     }
 };
 
+pub const DEFAULT_SESSION_TIMEOUT_MS: i64 = 30 * 60 * 1000;
+
 /// Manages client sessions for request deduping
 pub const SessionManager = struct {
     allocator: Allocator,
     sessions: std.AutoHashMap(ClientId, Session),
+    session_timeout_ms: i64,
 
     pub fn init(allocator: Allocator) SessionManager {
+        return initWithTimeout(allocator, DEFAULT_SESSION_TIMEOUT_MS);
+    }
+
+    pub fn initWithTimeout(allocator: Allocator, timeout_ms: i64) SessionManager {
         return .{
             .allocator = allocator,
             .sessions = std.AutoHashMap(ClientId, Session).init(allocator),
+            .session_timeout_ms = timeout_ms,
         };
     }
 
@@ -85,6 +94,7 @@ pub const SessionManager = struct {
             .last_sequence = sequence,
             .last_response = null,
             .last_index = index,
+            .last_activity_ms = std.time.milliTimestamp(),
         };
     }
 
@@ -118,6 +128,7 @@ pub const SessionManager = struct {
         sequence: SequenceNumber,
         index: LogIndex,
         response: ?[]const u8,
+        last_activity_ms: i64,
     ) !void {
         const result = try self.sessions.getOrPut(client_id);
         if (result.found_existing) {
@@ -135,7 +146,26 @@ pub const SessionManager = struct {
             .last_sequence = sequence,
             .last_response = response_copy,
             .last_index = index,
+            .last_activity_ms = last_activity_ms,
         };
+    }
+
+    pub fn expireStale(self: *SessionManager) usize {
+        const now = std.time.milliTimestamp();
+        return self.expireOlderThan(now - self.session_timeout_ms);
+    }
+
+    pub fn expireOlderThan(self: *SessionManager, threshold_ms: i64) usize {
+        var expired: usize = 0;
+        var it = self.sessions.iterator();
+        while (it.next()) |entry| {
+            if (entry.value_ptr.last_activity_ms < threshold_ms) {
+                entry.value_ptr.deinit(self.allocator);
+                self.sessions.removeByPtr(entry.key_ptr);
+                expired += 1;
+            }
+        }
+        return expired;
     }
 
     pub fn clear(self: *SessionManager) void {
@@ -199,7 +229,7 @@ test "SessionManager restore" {
 
     const client_id: ClientId = 42;
 
-    try manager.restoreSession(client_id, 10, 100, "cached_result");
+    try manager.restoreSession(client_id, 10, 100, "cached_result", std.time.milliTimestamp());
 
     const cached = manager.checkDuplicate(client_id, 10);
     try std.testing.expect(cached != null);
@@ -229,4 +259,26 @@ test "SessionManager multiple clients" {
     try std.testing.expectEqualStrings("client3_result", manager.checkDuplicate(3, 1).?);
 
     try std.testing.expectEqual(@as(usize, 3), manager.count());
+}
+
+test "SessionManager session expiry" {
+    const allocator = std.testing.allocator;
+    var manager = SessionManager.initWithTimeout(allocator, 1000);
+    defer manager.deinit();
+
+    const now = std.time.milliTimestamp();
+
+    try manager.restoreSession(1, 1, 10, "old", now - 2000);
+    try manager.restoreSession(2, 1, 11, "recent", now - 500);
+    try manager.restoreSession(3, 1, 12, "expired", now - 1500);
+
+    try std.testing.expectEqual(@as(usize, 3), manager.count());
+
+    const expired = manager.expireStale();
+
+    try std.testing.expectEqual(@as(usize, 2), expired);
+    try std.testing.expectEqual(@as(usize, 1), manager.count());
+    try std.testing.expect(manager.getSession(2) != null);
+    try std.testing.expect(manager.getSession(1) == null);
+    try std.testing.expect(manager.getSession(3) == null);
 }

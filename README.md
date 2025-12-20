@@ -103,7 +103,6 @@ zig build run-cluster
 - [ ] Optimize allocations and memory usage as we haven't focused on perf at all
 
 ### Raft Enhancements
-- [ ] **Client session cleanup** - Session expiry on timeout
 - [ ] **Request batching/pipelining**
   - [ ] Batch multiple client requests into single AppendEntries RPC
   - [ ] Pipeline multiple outstanding requests

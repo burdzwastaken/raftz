@@ -356,6 +356,9 @@ pub const Storage = struct {
             std.mem.writeInt(u64, &buf, session.last_index, .little);
             try file.writeAll(&buf);
 
+            std.mem.writeInt(i64, &buf, session.last_activity_ms, .little);
+            try file.writeAll(&buf);
+
             if (session.last_response) |response| {
                 const resp_len: u64 = @intCast(response.len);
                 std.mem.writeInt(u64, &buf, resp_len, .little);
@@ -399,6 +402,9 @@ pub const Storage = struct {
             const last_index = std.mem.readInt(u64, &buf, .little);
 
             _ = try file.readAll(&buf);
+            const last_activity_ms = std.mem.readInt(i64, &buf, .little);
+
+            _ = try file.readAll(&buf);
             const resp_len = std.mem.readInt(u64, &buf, .little);
 
             const response: ?[]const u8 = if (resp_len > 0) blk: {
@@ -407,7 +413,7 @@ pub const Storage = struct {
                 break :blk resp;
             } else null;
 
-            try sessions.restoreSession(client_id, last_sequence, last_index, response);
+            try sessions.restoreSession(client_id, last_sequence, last_index, response, last_activity_ms);
 
             if (response) |resp| {
                 self.allocator.free(resp);
@@ -483,4 +489,50 @@ test "Storage save and load state" {
     try std.testing.expectEqual(@as(Term, 5), state.term);
     try std.testing.expectEqual(@as(?ServerId, 2), state.voted_for);
     try std.testing.expectEqual(@as(LogIndex, 10), state.last_applied);
+}
+
+test "Storage save and load sessions" {
+    const allocator = std.testing.allocator;
+
+    const dir_path = "test_storage_sessions";
+    std.fs.cwd().makeDir(dir_path) catch {};
+    defer std.fs.cwd().deleteTree(dir_path) catch {};
+
+    var storage = try Storage.init(allocator, dir_path);
+    defer storage.deinit();
+
+    var sessions = SessionManager.init(allocator);
+    defer sessions.deinit();
+
+    const timestamp: i64 = 1234567890;
+    try sessions.restoreSession(1, 10, 100, "response1", timestamp);
+    try sessions.restoreSession(2, 20, 200, null, timestamp + 1000);
+    try sessions.restoreSession(3, 30, 300, "response3", timestamp + 2000);
+
+    try storage.saveSessions(&sessions);
+
+    var loaded = SessionManager.init(allocator);
+    defer loaded.deinit();
+
+    try storage.loadSessions(&loaded);
+
+    try std.testing.expectEqual(@as(usize, 3), loaded.count());
+
+    const s1 = loaded.getSession(1).?;
+    try std.testing.expectEqual(@as(SequenceNumber, 10), s1.last_sequence);
+    try std.testing.expectEqual(@as(LogIndex, 100), s1.last_index);
+    try std.testing.expectEqual(timestamp, s1.last_activity_ms);
+    try std.testing.expectEqualStrings("response1", s1.last_response.?);
+
+    const s2 = loaded.getSession(2).?;
+    try std.testing.expectEqual(@as(SequenceNumber, 20), s2.last_sequence);
+    try std.testing.expectEqual(@as(LogIndex, 200), s2.last_index);
+    try std.testing.expectEqual(timestamp + 1000, s2.last_activity_ms);
+    try std.testing.expect(s2.last_response == null);
+
+    const s3 = loaded.getSession(3).?;
+    try std.testing.expectEqual(@as(SequenceNumber, 30), s3.last_sequence);
+    try std.testing.expectEqual(@as(LogIndex, 300), s3.last_index);
+    try std.testing.expectEqual(timestamp + 2000, s3.last_activity_ms);
+    try std.testing.expectEqualStrings("response3", s3.last_response.?);
 }
