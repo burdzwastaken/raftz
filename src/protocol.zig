@@ -237,68 +237,67 @@ pub fn serialize(allocator: Allocator, msg: Message) ![]const u8 {
 
 /// Deserialize a message from binary format
 pub fn deserialize(allocator: Allocator, data: []const u8) !Message {
-    var fbs = std.io.fixedBufferStream(data);
-    const reader = fbs.reader();
+    var reader = std.Io.Reader.fixed(data);
 
-    const msg_type_byte = try reader.readByte();
+    const msg_type_byte = try reader.takeByte();
     const msg_type: MessageType = @enumFromInt(msg_type_byte);
 
     return switch (msg_type) {
         .request_vote_request => .{
             .request_vote_request = .{
-                .term = try reader.readInt(u64, .little),
-                .candidate_id = try reader.readInt(u64, .little),
-                .last_log_index = try reader.readInt(u64, .little),
-                .last_log_term = try reader.readInt(u64, .little),
+                .term = try reader.takeInt(u64, .little),
+                .candidate_id = try reader.takeInt(u64, .little),
+                .last_log_index = try reader.takeInt(u64, .little),
+                .last_log_term = try reader.takeInt(u64, .little),
             },
         },
         .request_vote_response => .{
             .request_vote_response = .{
-                .term = try reader.readInt(u64, .little),
-                .vote_granted = (try reader.readByte()) != 0,
+                .term = try reader.takeInt(u64, .little),
+                .vote_granted = (try reader.takeByte()) != 0,
             },
         },
         .append_entries_request => {
-            const term = try reader.readInt(u64, .little);
-            const leader_id = try reader.readInt(u64, .little);
-            const prev_log_index = try reader.readInt(u64, .little);
-            const prev_log_term = try reader.readInt(u64, .little);
-            const entries_len = try reader.readInt(u64, .little);
+            const term = try reader.takeInt(u64, .little);
+            const leader_id = try reader.takeInt(u64, .little);
+            const prev_log_index = try reader.takeInt(u64, .little);
+            const prev_log_term = try reader.takeInt(u64, .little);
+            const entries_len = try reader.takeInt(u64, .little);
 
             const entries = try allocator.alloc(log_mod.LogEntry, @intCast(entries_len));
             errdefer allocator.free(entries);
 
             for (entries) |*entry| {
-                entry.term = try reader.readInt(u64, .little);
-                entry.index = try reader.readInt(u64, .little);
-                const entry_type_byte = try reader.readByte();
+                entry.term = try reader.takeInt(u64, .little);
+                entry.index = try reader.takeInt(u64, .little);
+                const entry_type_byte = try reader.takeByte();
 
                 if (entry_type_byte == 0) {
-                    const cmd_len = try reader.readInt(u64, .little);
+                    const cmd_len = try reader.takeInt(u64, .little);
                     const command = try allocator.alloc(u8, @intCast(cmd_len));
-                    try reader.readNoEof(command);
+                    try reader.readSliceAll(command);
                     entry.* = log_mod.LogEntry.command(entry.term, entry.index, command);
                 } else if (entry_type_byte == 1) {
-                    const old_servers_len = try reader.readInt(u64, .little);
+                    const old_servers_len = try reader.takeInt(u64, .little);
                     const old_servers = try allocator.alloc(types.ServerId, @intCast(old_servers_len));
                     for (old_servers) |*server_id| {
-                        server_id.* = try reader.readInt(u64, .little);
+                        server_id.* = try reader.takeInt(u64, .little);
                     }
 
-                    const has_new = (try reader.readByte()) != 0;
+                    const has_new = (try reader.takeByte()) != 0;
                     const new_servers = if (has_new) blk: {
-                        const new_servers_len = try reader.readInt(u64, .little);
+                        const new_servers_len = try reader.takeInt(u64, .little);
                         const new = try allocator.alloc(types.ServerId, @intCast(new_servers_len));
                         for (new) |*server_id| {
-                            server_id.* = try reader.readInt(u64, .little);
+                            server_id.* = try reader.takeInt(u64, .little);
                         }
                         break :blk new;
                     } else null;
 
-                    const learners_len = try reader.readInt(u64, .little);
+                    const learners_len = try reader.takeInt(u64, .little);
                     const learners = try allocator.alloc(types.ServerId, @intCast(learners_len));
                     for (learners) |*learner_id| {
-                        learner_id.* = try reader.readInt(u64, .little);
+                        learner_id.* = try reader.takeInt(u64, .little);
                     }
 
                     const config_data = log_mod.ConfigurationData{
@@ -308,16 +307,16 @@ pub fn deserialize(allocator: Allocator, data: []const u8) !Message {
                     };
                     entry.* = log_mod.LogEntry.configuration(entry.term, entry.index, config_data);
                 } else {
-                    const client_id = try reader.readInt(u64, .little);
-                    const sequence = try reader.readInt(u64, .little);
-                    const cmd_len = try reader.readInt(u64, .little);
+                    const client_id = try reader.takeInt(u64, .little);
+                    const sequence = try reader.takeInt(u64, .little);
+                    const cmd_len = try reader.takeInt(u64, .little);
                     const command = try allocator.alloc(u8, @intCast(cmd_len));
-                    try reader.readNoEof(command);
+                    try reader.readSliceAll(command);
                     entry.* = log_mod.LogEntry.clientCommand(entry.term, entry.index, client_id, sequence, command);
                 }
             }
 
-            const leader_commit = try reader.readInt(u64, .little);
+            const leader_commit = try reader.takeInt(u64, .little);
 
             return .{
                 .append_entries_request = .{
@@ -332,41 +331,41 @@ pub fn deserialize(allocator: Allocator, data: []const u8) !Message {
         },
         .append_entries_response => .{
             .append_entries_response = .{
-                .term = try reader.readInt(u64, .little),
-                .success = (try reader.readByte()) != 0,
-                .match_index = try reader.readInt(u64, .little),
+                .term = try reader.takeInt(u64, .little),
+                .success = (try reader.takeByte()) != 0,
+                .match_index = try reader.takeInt(u64, .little),
             },
         },
         .install_snapshot_request => {
-            const term = try reader.readInt(u64, .little);
-            const leader_id = try reader.readInt(u64, .little);
-            const last_included_index = try reader.readInt(u64, .little);
-            const last_included_term = try reader.readInt(u64, .little);
-            const offset = try reader.readInt(u64, .little);
-            const data_len = try reader.readInt(u64, .little);
+            const term = try reader.takeInt(u64, .little);
+            const leader_id = try reader.takeInt(u64, .little);
+            const last_included_index = try reader.takeInt(u64, .little);
+            const last_included_term = try reader.takeInt(u64, .little);
+            const offset = try reader.takeInt(u64, .little);
+            const data_len = try reader.takeInt(u64, .little);
             const snapshot_data = try allocator.alloc(u8, @intCast(data_len));
-            try reader.readNoEof(snapshot_data);
-            const done = (try reader.readByte()) != 0;
+            try reader.readSliceAll(snapshot_data);
+            const done = (try reader.takeByte()) != 0;
 
-            const config_type: types.ConfigurationType = if ((try reader.readByte()) != 0) .joint else .simple;
-            const servers_len = try reader.readInt(u64, .little);
+            const config_type: types.ConfigurationType = if ((try reader.takeByte()) != 0) .joint else .simple;
+            const servers_len = try reader.takeInt(u64, .little);
             const servers = try allocator.alloc(types.ServerId, @intCast(servers_len));
             for (servers) |*server_id| {
-                server_id.* = try reader.readInt(u64, .little);
+                server_id.* = try reader.takeInt(u64, .little);
             }
-            const has_new = (try reader.readByte()) != 0;
+            const has_new = (try reader.takeByte()) != 0;
             const new_servers = if (has_new) blk: {
-                const new_servers_len = try reader.readInt(u64, .little);
+                const new_servers_len = try reader.takeInt(u64, .little);
                 const new = try allocator.alloc(types.ServerId, @intCast(new_servers_len));
                 for (new) |*server_id| {
-                    server_id.* = try reader.readInt(u64, .little);
+                    server_id.* = try reader.takeInt(u64, .little);
                 }
                 break :blk new;
             } else null;
-            const learners_len = try reader.readInt(u64, .little);
+            const learners_len = try reader.takeInt(u64, .little);
             const learners = try allocator.alloc(types.ServerId, @intCast(learners_len));
             for (learners) |*learner_id| {
-                learner_id.* = try reader.readInt(u64, .little);
+                learner_id.* = try reader.takeInt(u64, .little);
             }
 
             return .{
@@ -387,55 +386,55 @@ pub fn deserialize(allocator: Allocator, data: []const u8) !Message {
         },
         .install_snapshot_response => .{
             .install_snapshot_response = .{
-                .term = try reader.readInt(u64, .little),
+                .term = try reader.takeInt(u64, .little),
             },
         },
         .pre_vote_request => .{
             .pre_vote_request = .{
-                .term = try reader.readInt(u64, .little),
-                .candidate_id = try reader.readInt(u64, .little),
-                .last_log_index = try reader.readInt(u64, .little),
-                .last_log_term = try reader.readInt(u64, .little),
+                .term = try reader.takeInt(u64, .little),
+                .candidate_id = try reader.takeInt(u64, .little),
+                .last_log_index = try reader.takeInt(u64, .little),
+                .last_log_term = try reader.takeInt(u64, .little),
             },
         },
         .pre_vote_response => .{
             .pre_vote_response = .{
-                .term = try reader.readInt(u64, .little),
-                .vote_granted = (try reader.readByte()) != 0,
+                .term = try reader.takeInt(u64, .little),
+                .vote_granted = (try reader.takeByte()) != 0,
             },
         },
         .read_index_request => .{
             .read_index_request = .{
-                .read_id = try reader.readInt(u64, .little),
+                .read_id = try reader.takeInt(u64, .little),
             },
         },
         .read_index_response => .{
             .read_index_response = .{
-                .term = try reader.readInt(u64, .little),
-                .read_index = try reader.readInt(u64, .little),
-                .success = (try reader.readByte()) != 0,
+                .term = try reader.takeInt(u64, .little),
+                .read_index = try reader.takeInt(u64, .little),
+                .success = (try reader.takeByte()) != 0,
             },
         },
         .timeout_now_request => .{
             .timeout_now_request = .{
-                .term = try reader.readInt(u64, .little),
-                .leader_id = try reader.readInt(u64, .little),
+                .term = try reader.takeInt(u64, .little),
+                .leader_id = try reader.takeInt(u64, .little),
             },
         },
         .timeout_now_response => .{
             .timeout_now_response = .{
-                .term = try reader.readInt(u64, .little),
+                .term = try reader.takeInt(u64, .little),
             },
         },
         .add_server_request => .{
             .add_server_request = .{
-                .new_server = try reader.readInt(u64, .little),
+                .new_server = try reader.takeInt(u64, .little),
             },
         },
         .add_server_response => {
-            const term = try reader.readInt(u64, .little);
-            const success = (try reader.readByte()) != 0;
-            const leader_id_raw = try reader.readInt(u64, .little);
+            const term = try reader.takeInt(u64, .little);
+            const success = (try reader.takeByte()) != 0;
+            const leader_id_raw = try reader.takeInt(u64, .little);
             return .{
                 .add_server_response = .{
                     .term = term,
@@ -446,13 +445,13 @@ pub fn deserialize(allocator: Allocator, data: []const u8) !Message {
         },
         .remove_server_request => .{
             .remove_server_request = .{
-                .old_server = try reader.readInt(u64, .little),
+                .old_server = try reader.takeInt(u64, .little),
             },
         },
         .remove_server_response => {
-            const term = try reader.readInt(u64, .little);
-            const success = (try reader.readByte()) != 0;
-            const leader_id_raw = try reader.readInt(u64, .little);
+            const term = try reader.takeInt(u64, .little);
+            const success = (try reader.takeByte()) != 0;
+            const leader_id_raw = try reader.takeInt(u64, .little);
             return .{
                 .remove_server_response = .{
                     .term = term,
@@ -463,13 +462,13 @@ pub fn deserialize(allocator: Allocator, data: []const u8) !Message {
         },
         .add_learner_request => .{
             .add_learner_request = .{
-                .learner_id = try reader.readInt(u64, .little),
+                .learner_id = try reader.takeInt(u64, .little),
             },
         },
         .add_learner_response => {
-            const term = try reader.readInt(u64, .little);
-            const success = (try reader.readByte()) != 0;
-            const leader_id_raw = try reader.readInt(u64, .little);
+            const term = try reader.takeInt(u64, .little);
+            const success = (try reader.takeByte()) != 0;
+            const leader_id_raw = try reader.takeInt(u64, .little);
             return .{
                 .add_learner_response = .{
                     .term = term,
@@ -480,13 +479,13 @@ pub fn deserialize(allocator: Allocator, data: []const u8) !Message {
         },
         .remove_learner_request => .{
             .remove_learner_request = .{
-                .learner_id = try reader.readInt(u64, .little),
+                .learner_id = try reader.takeInt(u64, .little),
             },
         },
         .remove_learner_response => {
-            const term = try reader.readInt(u64, .little);
-            const success = (try reader.readByte()) != 0;
-            const leader_id_raw = try reader.readInt(u64, .little);
+            const term = try reader.takeInt(u64, .little);
+            const success = (try reader.takeByte()) != 0;
+            const leader_id_raw = try reader.takeInt(u64, .little);
             return .{
                 .remove_learner_response = .{
                     .term = term,
@@ -497,13 +496,13 @@ pub fn deserialize(allocator: Allocator, data: []const u8) !Message {
         },
         .promote_learner_request => .{
             .promote_learner_request = .{
-                .learner_id = try reader.readInt(u64, .little),
+                .learner_id = try reader.takeInt(u64, .little),
             },
         },
         .promote_learner_response => {
-            const term = try reader.readInt(u64, .little);
-            const success = (try reader.readByte()) != 0;
-            const leader_id_raw = try reader.readInt(u64, .little);
+            const term = try reader.takeInt(u64, .little);
+            const success = (try reader.takeByte()) != 0;
+            const leader_id_raw = try reader.takeInt(u64, .little);
             return .{
                 .promote_learner_response = .{
                     .term = term,

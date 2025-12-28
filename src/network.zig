@@ -17,7 +17,7 @@ pub const Address = struct {
     host: []const u8,
     port: u16,
 
-    pub fn format(self: Address, writer: anytype) !void {
+    pub fn format(self: Address, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("{s}:{d}", .{ self.host, self.port });
     }
 };
@@ -481,9 +481,9 @@ test "Address formatting" {
     const addr = Address{ .host = "127.0.0.1", .port = 5000 };
 
     var buf: [64]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
-    try std.fmt.format(fbs.writer(), "{f}", .{addr});
-    const result = fbs.getWritten();
+    var writer = std.Io.Writer.fixed(&buf);
+    try addr.format(&writer);
+    const result = writer.buffered();
 
     try std.testing.expectEqualStrings("127.0.0.1:5000", result);
 }

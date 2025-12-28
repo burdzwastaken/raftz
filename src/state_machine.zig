@@ -136,9 +136,10 @@ pub const KvStore = struct {
         var list = std.ArrayListUnmanaged(u8){};
         errdefer list.deinit(self.allocator);
 
+        const writer = list.writer(self.allocator);
         var it = self.data.iterator();
         while (it.next()) |entry| {
-            try list.writer(self.allocator).print("{s}={s}\n", .{ entry.key_ptr.*, entry.value_ptr.* });
+            writer.print("{s}={s}\n", .{ entry.key_ptr.*, entry.value_ptr.* }) catch return Error.OutOfMemory;
         }
 
         return list.toOwnedSlice(self.allocator);
